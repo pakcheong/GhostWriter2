@@ -1,0 +1,22 @@
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-lock.yaml
+.DS_Store
+
+# Builds / Outputs
+dist/
+result/
+coverage/
+
+# Env
+.env
+.env.local
+.env.*.local
+
+# Editor junk
+.vscode/
+.idea/
+*.swp

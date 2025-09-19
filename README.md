@@ -1,8 +1,8 @@
 # Ghostwriter — SEO Article Generator
 
-A TypeScript / Vercel AI SDK–based pipeline that generates SEO-ready blog articles (JSON/HTML/Markdown) for WordPress.
+TypeScript + Vercel AI SDK pipeline that generates SEO-ready blog articles (JSON/HTML/Markdown) for WordPress.
 
-- Providers: **OpenAI** and **Deepseek**
+- Models: **OpenAI** + **Deepseek** (auto-mapped; no provider flag)
 - Multi-language output (`--lang`)
 - Model-aware pricing estimates (from `.env` or CLI)
 - Context strategies for cohesion across sections
@@ -15,6 +15,7 @@ A TypeScript / Vercel AI SDK–based pipeline that generates SEO-ready blog arti
 ## Features
 
 - **Two-phase generation**: _outline → subsections_ (+ optional per-section summary).
+- **Duplicate-aware outline** with merge + retry; status = `success|warning`.
 - **Context strategies**:
   - `outline`: minimal context (fastest)
   - `full`: includes previous sections
@@ -83,7 +84,6 @@ Development (tsx):
 
 ```bash
 npx tsx ./scripts/generate-article.ts \
-  --provider openai \
   --model gpt-4o-mini \
   --topic "React 19: What Changes for Production Apps" \
   --keywords "react 19, transitions, actions, server components" \
@@ -110,8 +110,7 @@ node ./dist/scripts/generate-article.js [options...]
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
-| `--provider` | `openai`\|`deepseek` | `openai` | Provider. |
-| `--model` | string | From `.env` (`OPENAI_MODEL`/`DEEPSEEK_MODEL`) | Model id to use. |
+| `--model` | string | From `.env` (`OPENAI_MODEL`/`DEEPSEEK_MODEL`) | Model id (provider inferred). |
 | `--topic` | string | `"The Future of AI in Web Development"` | Article topic seed. |
 | `--keywords` | csv | `"AI in web development, JavaScript, SEO blog"` | Global keywords to emphasize (`**bold**`). |
 | `--min` | number | `1000` | Target minimum words. |
@@ -126,7 +125,7 @@ node ./dist/scripts/generate-article.js [options...]
 | `--outdir` | string | `./result` | Output directory. |
 | `--price-in` | number | from `.env` | Override input token price. |
 | `--price-out` | number | from `.env` | Override output token price. |
-| `--verbose` | flag | off | Prints per-section timing + usage/cost tables. |
+| `--verbose` | flag | on (unless --quiet) | Prints per-section timing + usage/cost tables. |
 
 ---
 
@@ -138,6 +137,53 @@ node ./dist/scripts/generate-article.js [options...]
 3. **Summaries** (optional): concise per-section summaries if `--context summary`.
 4. **Assembly**: combine into full article object.
 5. **Export**: write JSON/HTML/Markdown outputs into `result/` (or `--outdir`).
+
+---
+
+## Architecture
+
+The codebase is now modularized for clarity and testability:
+
+| Module | Purpose |
+|--------|---------|
+| `src/generate-article.ts` | Orchestrator + CLI entry (when run directly); coordinates outline, sections, summaries, assembly, export. |
+| `src/types.ts` | Shared type definitions (providers, strategies, article/result interfaces, timing structs). |
+| `src/prompts.ts` | All prompt construction helpers (outline / section / summary). Pure string builders. |
+| `src/model-config.ts` | Model→provider client resolution (OpenAI / Deepseek) |
+| (removed) `src/provider.ts` | Legacy (deleted) |
+| `src/usage.ts` | Usage extraction + token fallback estimation. |
+| `src/pricing.ts` | Price resolution logic (CLI > model-specific env > global env). |
+| `src/assembly.ts` | Article assembly + filename utilities + HTML/Markdown document builders + duration formatting. |
+| `src/utils.ts` | Cross-cutting utilities: Markdown sanitation, HTML→Markdown, token estimation, cost helpers. |
+| `tests/*.test.ts` | Lightweight assertion-based tests (no framework) for prompts, pricing, assembly. |
+
+### Data / Control Flow
+1. CLI parses args → resolves model + pricing.
+2. `generateOutlineInternal` builds outline prompt → model call → JSON sanitized.
+3. For each section/subheading: `generateSubsectionMarkdownInternal` builds contextual messages + model call.
+4. Optional summaries per section when `contextStrategy === 'summary'`.
+5. `assembleArticle` combines sanitized blocks → `ArticleJSON` enriched with usage + cost.
+6. Export helpers produce `json`, `html` (Markdown → HTML), and `md` (front matter style) files.
+
+### Extending
+- Add a new model: extend `MODEL_PROVIDER_MAP` in `generate-article.ts` (maps model id → provider).
+- New context strategy: adjust loop in `generate-article.ts` and add message injection logic similar to `full/summary` branches.
+- Additional export format: implement in `assembly.ts` (e.g., `buildRssItem`) and wire into export switch.
+- More pricing models: expand `MODEL_ENV_MAP` in `pricing.ts`.
+
+### Testing Philosophy
+Deterministic tests use a mock `__setGenerateTextImpl` to avoid network calls and assert:
+- JSON shape (no `provider`, includes `timings`, `sectionTimings`, `status`).
+- Callback invocation (`onArticle`).
+- Pricing & usage aggregation.
+
+### Callback
+`onArticle?: (article: ArticleJSON) => void | Promise<void>` fires after the article object (with timings/status) is built and before function returns. Use it for streaming, additional persistence, or custom logging.
+
+### Timings & Status
+`article.timings` includes `outlineMs`, `assembleMs`, `exportMs`, `totalMs`, `outlineAttempts`.
+`article.sectionTimings[]` lists per-section + per-subheading durations.
+`article.status` is `warning` if collapsed duplicate ratio in outline > 20%, else `success`.
 
 ---
 

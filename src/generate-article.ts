@@ -1,8 +1,7 @@
 // scripts/generate-article.ts
 // Library + CLI. Prints the combined "preview + timings" table only AFTER all work is done.
 
-import { generateText } from 'ai';
-import { createOpenAI } from '@ai-sdk/openai';
+import { generateText as realGenerateText } from 'ai';
 import fs from 'fs';
 import path from 'path';
 import dotenv from 'dotenv';
@@ -12,218 +11,119 @@ import Table from 'cli-table3';
 import {
   sanitizeMarkdown,
   markdownToHtml,
-  maskKey,
   getArg,
   sanitizeToJSONObject,
-  estimateTokens,
   type Usage,
   emptyUsage,
   addUsage,
   formatUSD,
   costEstimate,
 } from './utils.js';
+import type { ContextStrategy, ExportMode, OutlineItem, OutlineResult, ArticleJSON, GenerateArticleOptions, SectionTiming, SubTiming, ArticleTimings } from './types.js';
+import { buildOutlinePrompt, buildSectionPrompt, buildSummaryPrompt } from './prompts.js';
+import { getClientForProvider } from './model-config.js';
+
+// Explicit model→provider mapping. Add entries as needed.
+const MODEL_PROVIDER_MAP: Record<string, 'openai' | 'deepseek'> = {
+  'gpt-4o-mini': 'openai',
+  'gpt-4o': 'openai',
+  'gpt-4.1': 'openai',
+  'gpt-4.1-mini': 'openai',
+  'o3-mini': 'openai',
+  'text-davinci-003': 'openai',
+  'deepseek-chat': 'deepseek',
+  'deepseek-reasoner': 'deepseek',
+};
+
+function resolveProviderForModel(model: string): 'openai' | 'deepseek' {
+  const key = model.toLowerCase();
+  if (MODEL_PROVIDER_MAP[key]) return MODEL_PROVIDER_MAP[key];
+  throw new Error(`Unknown model '${model}'. Please add it to MODEL_PROVIDER_MAP.`);
+}
+import { extractUsage } from './usage.js';
+import { resolvePrices } from './pricing.js';
+import { assembleArticle, sanitizeBaseName, uniquePath, buildHtmlDocument, buildMarkdownDocument, formatDuration } from './assembly.js';
+import { dedupeOutline, computeDuplicateRatio } from './dedupe.js';
 
 dotenv.config({ path: path.join(process.cwd(), '.env') });
 
-export type Provider = 'openai' | 'deepseek';
-export type ContextStrategy = 'outline' | 'full' | 'summary';
-export type ExportMode = 'json' | 'html' | 'md';
-
-interface OutlineItem {
-  heading: string;
-  subheadings: string[];
-}
-interface OutlineResult {
-  title: string;
-  description: string;
-  slug: string;
-  outline: OutlineItem[];
-  tags: string[];
-  categories: string[];
-}
-interface ArticleBase {
-  title: string;
-  description: string;
-  body: string;
-  tags: string[];
-  categories: string[];
-  slug: string;
-}
-export interface ArticleJSON extends ArticleBase {
-  provider: Provider;
-  model: string;
-  usage: {
-    outline: Usage;
-    sections: Usage;
-    summaries?: Usage;
-    total: Usage;
-  };
-  cost?: {
-    outline?: number;
-    sections?: number;
-    summaries?: number;
-    total?: number;
-    priceInPerK?: number;
-    priceOutPerK?: number;
-  };
+// Removed in favor of modularized helpers.
+// Allow tests to inject a mock generateText implementation to avoid real API calls.
+let _generateTextImpl: typeof realGenerateText | ((args: any) => Promise<any>) = realGenerateText;
+export function __setGenerateTextImpl(fn: typeof realGenerateText | ((args: any) => Promise<any>)) {
+  _generateTextImpl = fn;
 }
 
-export interface GenerateArticleOptions {
-  provider?: Provider;
-  model?: string;
-  topic: string;
-  keywords: string[];
-  minWords?: number;
-  maxWords?: number;
-  existingTags?: string[];
-  existingCategories?: string[];
-  styleNotes?: string;
-  lang?: string;
-  contextStrategy?: ContextStrategy;
+async function safeGenerateText(args: any, context: { provider: string; model: string; phase: string }) {
+  try {
+    // Custom Deepseek compatibility: the ai SDK's responses endpoint may 404; fall back to direct chat/completions.
+    if (context.provider === 'deepseek') {
+      const apiKey = process.env.DEEPSEEK_API_KEY;
+      if (!apiKey) throw new Error('Missing DEEPSEEK_API_KEY.');
+      let base = process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com/v1';
+      if (!/\/v\d+$/.test(base)) base = base.replace(/\/$/, '') + '/v1';
 
-  priceInPerK?: string | number;
-  priceOutPerK?: string | number;
-
-  exportModes?: ExportMode[];
-  outBaseName?: string;
-  outputDir?: string;
-  singleRunTimestamp?: number;
-  writeFiles?: boolean;
-
-  verbose?: boolean;
-  printPreview?: boolean; // kept for API compatibility; preview is printed at the end
-  printUsage?: boolean;
-}
-
-type MaybeUsage = {
-  promptTokens?: number;
-  completionTokens?: number;
-  totalTokens?: number;
-};
-
-let loggedProviderOnce = false;
-function createProvider(provider: Provider, verbose: boolean) {
-  if (provider === 'deepseek') {
-    const key = process.env.DEEPSEEK_API_KEY;
-    if (!key) throw new Error('Missing DEEPSEEK_API_KEY.');
-    if (!loggedProviderOnce && verbose) {
-      console.log(`Using Deepseek: ${maskKey(key)}`);
-      loggedProviderOnce = true;
+      const url = base.replace(/\/$/, '') + '/chat/completions';
+      const messages = args.messages
+        ? args.messages.map((m: any) => ({ role: m.role, content: m.content }))
+        : [{ role: 'user', content: args.prompt }];
+      const body: any = {
+        model: context.model,
+        messages,
+      };
+      // Pass through basic sampling params if present.
+      if (args.temperature != null) body.temperature = args.temperature;
+      const resp = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify(body),
+      });
+      if (!resp.ok) {
+        const txt = await resp.text();
+        throw new Error(`Deepseek API error ${resp.status}: ${txt}`);
+      }
+      const json: any = await resp.json();
+      const content = json.choices?.[0]?.message?.content || '';
+      const usage = json.usage
+        ? {
+            promptTokens: json.usage.prompt_tokens,
+            completionTokens: json.usage.completion_tokens,
+            totalTokens: json.usage.total_tokens,
+          }
+        : undefined;
+      return { text: content, usage };
     }
-    return createOpenAI({
-      apiKey: key,
-      baseURL: process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com',
-    });
+    return await _generateTextImpl(args);
+  } catch (err: any) {
+    const status = err?.statusCode || err?.status || err?.code;
+    if (status === 404) {
+      const hints: string[] = [
+        'Received 404 from model API.',
+        `Phase: ${context.phase}`,
+        `Provider: ${context.provider}`,
+        `Model: ${context.model}`,
+      ];
+      if (context.provider === 'deepseek') {
+        hints.push(
+          'Hints: Ensure base URL includes /v1 (e.g. https://api.deepseek.com/v1).',
+          "Confirm model name (e.g. 'deepseek-chat').",
+          'Unset OPENAI_MODEL if it incorrectly overrides Deepseek model.',
+          'Set DEEPSEEK_MODEL or pass model explicitly.'
+        );
+      } else if (context.provider === 'openai') {
+        hints.push('Hints: Using an OpenAI provider; model should start with gpt- or o.*');
+      }
+      const guidance = hints.join('\n - ');
+      err.message = `${err.message || '404 Not Found'}\n${guidance}`;
+    }
+    throw err;
   }
-  const key = process.env.OPENAI_API_KEY;
-  if (!key) throw new Error('Missing OPENAI_API_KEY.');
-  if (!loggedProviderOnce && verbose) {
-    console.log(`Using OpenAI: ${maskKey(key)}`);
-    loggedProviderOnce = true;
-  }
-  return createOpenAI({ apiKey: key });
-}
-
-function buildOutlinePrompt(params: {
-  topic: string;
-  keywords: string[];
-  wordCountRange: [number, number];
-  existingTags: string[];
-  existingCategories: string[];
-  lang: string;
-}) {
-  const { topic, keywords, wordCountRange, existingTags, existingCategories, lang } = params;
-
-  return `
-You are an expert SEO blog planner.
-
-Return a JSON object with:
-- "title": main article title in ${lang}.
-- "description": SEO meta description (~150 chars) in ${lang}.
-- "slug": lowercase, URL-friendly, hyphenated (keep in English).
-- "tags": array of lowercase unique strings.
-- "categories": array of lowercase unique strings.
-- "outline": array of sections. Each has:
-  - "heading": a clear section title in ${lang}.
-  - "subheadings": 2–4 concise subheadings in ${lang}.
-
-Constraints:
-- Topic: ${topic}
-- Target word count: ${wordCountRange[0]}–${wordCountRange[1]}.
-- Keywords to emphasize later: ${keywords.join(', ')}.
-- Output must be valid JSON only.
-Reference taxonomy:
-- Available tags: [${existingTags.join(', ')}]
-- Available categories: [${existingCategories.join(', ')}]
-`.trim();
-}
-
-function buildSectionPrompt(context: {
-  topic: string;
-  keywords: string[];
-  styleNotes?: string;
-  section: OutlineItem;
-  subheading: string;
-  lang: string;
-}) {
-  const { topic, keywords, styleNotes, section, subheading, lang } = context;
-
-  return `
-You are an expert SEO blog writer.
-
-Write a Markdown-only section in ${lang}. No HTML tags.
-
-Requirements:
-- Start with: "## ${section.heading}"
-- Then: "### ${subheading}"
-- Write concise, well-structured content. Typically 2–4 paragraphs are sufficient, but feel free to expand with additional paragraphs if the topic benefits from more depth.
-- Lists are optional; include a brief list only if it clearly improves clarity or scan-ability.
-- Use **bold** for emphasis (no HTML).
-- Include exactly one [image]an image description[/image] placeholder for THIS subheading, written in ${lang}.
-- Keep content focused on this subheading; avoid repeating previous subheadings.
-
-Context:
-- Topic: ${topic}
-- Global keywords (bold at least once across this section): ${keywords.join(', ')}
-- Style/Tone: ${styleNotes || 'clear, practical, consistent'}
-`.trim();
-}
-
-function buildSummaryPrompt(sectionText: string, lang: string) {
-  return `
-Summarize the following Markdown content into 1–2 concise sentences in ${lang}.
-The summary should capture the main idea but not exceed 80 words.
-
-Content:
-${sectionText}
-`.trim();
-}
-
-function extractUsage(
-  res: unknown,
-  modelId: string | undefined,
-  promptText: string,
-  completionText: string
-): Usage {
-  const u = (res as { usage?: MaybeUsage } | undefined)?.usage ?? {};
-  const promptTokens =
-    typeof u.promptTokens === 'number'
-      ? u.promptTokens
-      : estimateTokens(promptText, modelId);
-  const completionTokens =
-    typeof u.completionTokens === 'number'
-      ? u.completionTokens
-      : estimateTokens(completionText, modelId);
-  const totalTokens =
-    typeof u.totalTokens === 'number'
-      ? u.totalTokens
-      : promptTokens + completionTokens;
-
-  return { promptTokens, completionTokens, totalTokens };
 }
 
 async function generateOutlineInternal(opts: {
-  provider: Provider;
   model: string;
   topic: string;
   keywords: string[];
@@ -233,7 +133,8 @@ async function generateOutlineInternal(opts: {
   lang: string;
   verbose: boolean;
 }): Promise<{ outline: OutlineResult; usage: Usage; modelId: string; ms: number }> {
-  const provider = createProvider(opts.provider, opts.verbose);
+  const provider = resolveProviderForModel(opts.model);
+  const { openai } = getClientForProvider(provider, { verbose: opts.verbose });
 
   const promptText = buildOutlinePrompt({
     topic: opts.topic,
@@ -245,10 +146,13 @@ async function generateOutlineInternal(opts: {
   });
 
   const t0 = Date.now();
-  const res = await generateText({
-    model: provider(opts.model),
-    prompt: promptText,
-  });
+  const res = await safeGenerateText(
+    {
+      model: openai(opts.model),
+      prompt: promptText,
+    },
+    { provider, model: opts.model, phase: 'outline' }
+  );
   const ms = Date.now() - t0;
 
   const usage = extractUsage(res, opts.model, promptText, res.text);
@@ -257,7 +161,6 @@ async function generateOutlineInternal(opts: {
 }
 
 async function generateSubsectionMarkdownInternal(opts: {
-  provider: Provider;
   model: string;
   topic: string;
   keywords: string[];
@@ -271,7 +174,8 @@ async function generateSubsectionMarkdownInternal(opts: {
   previousSummaries: string[];
   verbose: boolean;
 }): Promise<{ text: string; usage: Usage; modelId: string; ms: number }> {
-  const provider = createProvider(opts.provider, opts.verbose);
+  const provider = resolveProviderForModel(opts.model);
+  const { openai } = getClientForProvider(provider, { verbose: opts.verbose });
   const section = opts.outline[opts.sectionIndex];
 
   const contextMessages: { role: 'system' | 'user'; content: string }[] = [
@@ -325,10 +229,13 @@ async function generateSubsectionMarkdownInternal(opts: {
   const joinedPrompt = contextMessages.map((m) => m.content).join('\n\n');
 
   const t0 = Date.now();
-  const res = await generateText({
-    model: provider(opts.model),
-    messages: contextMessages,
-  });
+  const res = await safeGenerateText(
+    {
+      model: openai(opts.model),
+      messages: contextMessages,
+    },
+    { provider, model: opts.model, phase: 'section' }
+  );
   const ms = Date.now() - t0;
 
   const usage = extractUsage(res, opts.model, joinedPrompt, res.text);
@@ -337,164 +244,36 @@ async function generateSubsectionMarkdownInternal(opts: {
 }
 
 async function generateSummaryInternal(opts: {
-  provider: Provider;
   model: string;
   sectionText: string;
   lang: string;
   verbose: boolean;
 }): Promise<{ text: string; usage: Usage; modelId: string; ms: number }> {
-  const provider = createProvider(opts.provider, opts.verbose);
+  const provider = resolveProviderForModel(opts.model);
+  const { openai } = getClientForProvider(provider, { verbose: opts.verbose });
   const prompt = buildSummaryPrompt(opts.sectionText, opts.lang);
 
   const t0 = Date.now();
-  const res = await generateText({
-    model: provider(opts.model),
-    prompt,
-  });
+  const res = await safeGenerateText(
+    {
+      model: openai(opts.model),
+      prompt,
+    },
+    { provider, model: opts.model, phase: 'summary' }
+  );
   const ms = Date.now() - t0;
 
   const usage = extractUsage(res, opts.model, prompt, res.text);
   return { text: res.text.trim(), usage, modelId: opts.model, ms };
 }
 
-function assembleArticle(params: {
-  meta: OutlineResult;
-  sections: string[];
-}): ArticleBase {
-  return {
-    title: params.meta.title,
-    description: params.meta.description,
-    body: params.sections.map(sanitizeMarkdown).join('\n\n'),
-    tags: Array.from(new Set(params.meta.tags || [])),
-    categories: Array.from(new Set(params.meta.categories || [])),
-    slug: params.meta.slug,
-  };
-}
-
-function ensureDir(outDir: string): string {
-  if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
-  return outDir;
-}
-function sanitizeBaseName(name: string): string {
-  return name
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, '-')
-    .replace(/[^a-z0-9._-]/g, '-')
-    .replace(/-+/g, '-')
-    .replace(/^[-.]+|[-.]+$/g, '') || 'article';
-}
-function uniquePath(outDir: string, baseName: string, ext: 'json' | 'html' | 'md', runTs: number): string {
-  ensureDir(outDir);
-  const desired = path.join(outDir, `${baseName}.${ext}`);
-  if (!fs.existsSync(desired)) return desired;
-  return path.join(outDir, `${baseName}-${runTs}.${ext}`);
-}
-function buildHtmlDocument(title: string, bodyHtml: string): string {
-  return `<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>${escapeHtml(title || 'Article')}</title>
-</head>
-<body>
-${bodyHtml}
-</body>
-</html>`;
-}
-function buildMarkdownDocument(title: string, description: string, body: string): string {
-  const lines = [`# ${title || 'Article'}`];
-  if (description) lines.push(`> ${description}`);
-  lines.push('', body.trim());
-  return lines.join('\n');
-}
-function escapeHtml(s: string) {
-  return s
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&#039;');
-}
-
-const MODEL_ENV_MAP: Record<string, { in: string; out: string }> = {
-  'gpt-4o-mini': { in: 'PRICE_GPT4O_MINI_IN', out: 'PRICE_GPT4O_MINI_OUT' },
-  'gpt-4o': { in: 'PRICE_GPT4O_IN', out: 'PRICE_GPT4O_OUT' },
-  'deepseek-chat': { in: 'PRICE_DEEPSEEK_CHAT_IN', out: 'PRICE_DEEPSEEK_CHAT_OUT' },
-  'deepseek-coder': { in: 'PRICE_DEEPSEEK_CODER_IN', out: 'PRICE_DEEPSEEK_CODER_OUT' },
-};
-
-function resolvePrices(
-  modelId?: string,
-  cliIn?: string | number,
-  cliOut?: string | number
-): {
-  in?: number;
-  out?: number;
-  found: boolean;
-  source: 'cli' | 'model' | 'global' | 'none';
-  pickedInKey?: string;
-  pickedOutKey?: string;
-} {
-  const toNum = (v?: string | number | null) =>
-    v == null || v === '' ? undefined : (Number.isFinite(+v) ? +v : undefined);
-
-  const inArg = toNum(cliIn);
-  const outArg = toNum(cliOut);
-  if (inArg != null || outArg != null) {
-    return { in: inArg, out: outArg, found: true, source: 'cli' };
-  }
-
-  if (modelId && MODEL_ENV_MAP[modelId]) {
-    const { in: inKey, out: outKey } = MODEL_ENV_MAP[modelId];
-    const inVal = toNum(process.env[inKey]);
-    const outVal = toNum(process.env[outKey]);
-    if (inVal != null || outVal != null) {
-      return {
-        in: inVal,
-        out: outVal,
-        found: true,
-        source: 'model',
-        pickedInKey: inKey,
-        pickedOutKey: outKey,
-      };
-    }
-  }
-
-  const globalIn = toNum(process.env.PRICE_IN);
-  const globalOut = toNum(process.env.PRICE_OUT);
-  if (globalIn != null || globalOut != null) {
-    return { in: globalIn, out: globalOut, found: true, source: 'global' };
-  }
-
-  return { found: false, source: 'none' };
-}
-
-function formatDuration(ms: number): string {
-  if (ms < 1000) return `${ms}ms`;
-  const sec = ms / 1000;
-  if (sec < 60) return `${sec.toFixed(1)}s`;
-  const m = Math.floor(sec / 60);
-  const s = Math.round(sec % 60);
-  return `${m}m ${s}s`;
-}
-
-type SubTiming = { title: string; ms: number };
-type SectionTiming = {
-  heading: string;
-  subheadingCount: number;
-  ms: number;
-  subTimings: SubTiming[];
-  summaryMs?: number;
-};
+// Pricing, assembly, timing helpers imported.
 
 export async function generateArticle(options: GenerateArticleOptions): Promise<{
   article: ArticleJSON;
   files?: { json?: string; html?: string; md?: string };
 }> {
   const {
-    provider = 'openai',
     model: modelInput,
     topic,
     keywords,
@@ -527,10 +306,9 @@ export async function generateArticle(options: GenerateArticleOptions): Promise<
   // For backwards compatibility: preview is now printed at the end, ignore printPreview flag.
   const printUsage = typeof printUsageOpt === 'boolean' ? printUsageOpt : verbose;
 
-  const envDefaultModel =
-    provider === 'openai' ? process.env.OPENAI_MODEL : process.env.DEEPSEEK_MODEL;
-  const defaultModel = provider === 'openai' ? 'gpt-4o-mini' : 'deepseek-chat';
-  const model = modelInput || envDefaultModel || defaultModel;
+  const envModel = process.env.OPENAI_MODEL || process.env.DEEPSEEK_MODEL;
+  const model = modelInput || envModel || 'gpt-4o-mini';
+  const provider = resolveProviderForModel(model);
 
   const totalStart = Date.now();
 
@@ -538,21 +316,35 @@ export async function generateArticle(options: GenerateArticleOptions): Promise<
   let sectionsUsage: Usage = emptyUsage();
   let summaryUsage: Usage = emptyUsage();
 
-  // Outline (timed)
-  const outlineStart = Date.now();
-  const { outline, usage: oUsage } = await generateOutlineInternal({
-    provider,
-    model,
-    topic,
-    keywords,
-    wordCountRange: [minWords, maxWords],
-    existingTags: existingTags.map((s) => s.toLowerCase()),
-    existingCategories: existingCategories.map((s) => s.toLowerCase()),
-    lang,
-    verbose,
-  });
-  const outlineMs = Date.now() - outlineStart;
-  outlineUsage = addUsage(outlineUsage, oUsage);
+  // Outline (timed) with duplicate detection + single retry if heavy duplication
+  const duplicateWarnThreshold = 0.2; // >20% collapsed triggers warning
+  let outline: OutlineResult;
+  let outlineMs: number;
+  let duplicateRatio = 0;
+  let outlineAttempts = 0;
+  const maxOutlineAttempts = 2;
+  // rawOutline variable removed (was unused after dedupe stats computation)
+  while (true) {
+    outlineAttempts++;
+    const outlineStart = Date.now();
+    const { outline: raw, usage: oUsage } = await generateOutlineInternal({
+      model,
+      topic,
+      keywords,
+      wordCountRange: [minWords, maxWords],
+      existingTags: existingTags.map((s) => s.toLowerCase()),
+      existingCategories: existingCategories.map((s) => s.toLowerCase()),
+      lang,
+      verbose,
+    });
+    const deduped = dedupeOutline(raw, { verbose });
+    duplicateRatio = computeDuplicateRatio(raw, deduped);
+    outline = deduped;
+    outlineMs = Date.now() - outlineStart;
+    outlineUsage = addUsage(outlineUsage, oUsage);
+    if (duplicateRatio <= duplicateWarnThreshold || outlineAttempts >= maxOutlineAttempts) break;
+    if (verbose) console.log(`[outline] High duplicate ratio ${(duplicateRatio * 100).toFixed(1)}% -> retrying once...`);
+  }
 
   // Sections (timed)
   const sectionBlocks: string[] = [];
@@ -569,7 +361,6 @@ export async function generateArticle(options: GenerateArticleOptions): Promise<
     for (const sh of sec.subheadings) {
       const subStart = Date.now();
       const { text, usage } = await generateSubsectionMarkdownInternal({
-        provider,
         model,
         topic,
         keywords,
@@ -584,20 +375,22 @@ export async function generateArticle(options: GenerateArticleOptions): Promise<
         verbose,
       });
       const subMs = Date.now() - subStart;
-
-      subBlocks.push(text);
+      // Strip any accidental duplicate section H2 emitted by model.
+      const cleaned = text
+        .replace(new RegExp(`^## +${sec.heading}\n+`, 'i'), '') // leading duplicate
+        .replace(new RegExp(`\n## +${sec.heading}\n`, 'gi'), '\n'); // interior duplicates
+      subBlocks.push(cleaned.trim());
       subTimings.push({ title: sh, ms: subMs });
       sectionsUsage = addUsage(sectionsUsage, usage);
     }
-
-    const sectionText = subBlocks.join('\n\n');
+    // Insert single H2 heading followed by all subsection blocks.
+    const sectionText = ['## ' + sec.heading, ...subBlocks].join('\n\n');
     sectionBlocks.push(sectionText);
 
     let summaryMs: number | undefined;
     if (contextStrategy === 'summary') {
       const sumStart = Date.now();
       const { text: sumText, usage } = await generateSummaryInternal({
-        provider,
         model,
         sectionText,
         lang,
@@ -643,37 +436,21 @@ export async function generateArticle(options: GenerateArticleOptions): Promise<
         }
       : undefined;
 
-  const articleJSON: ArticleJSON = {
-    ...baseArticle,
-    provider,
-    model,
-    usage: {
-      outline: outlineUsage,
-      sections: sectionsUsage,
-      summaries: contextStrategy === 'summary' ? summaryUsage : undefined,
-      total: totalUsage,
-    },
-    cost: costs,
-  };
+  const status: ArticleJSON['status'] = duplicateRatio > duplicateWarnThreshold ? 'warning' : 'success';
+  // timings object will be populated after totalMs is computed (below)
+  if (status === 'warning' && verbose) {
+    console.log(`[status] Outline duplicate ratio ${(duplicateRatio * 100).toFixed(1)}% exceeded ${(duplicateWarnThreshold*100).toFixed(0)}% threshold.`);
+  }
 
-  // Export (timed)
+  // Export (timed, excluding JSON until after articleJSON built)
   const files: { json?: string; html?: string; md?: string } = {};
   let exportMs = 0;
-
+  const runTs = singleRunTimestamp ?? Date.now();
+  const outDir = outputDir || path.join(process.cwd(), 'result');
+  const defaultBase = sanitizeBaseName(baseArticle.slug || baseArticle.title || 'article');
+  const baseName = sanitizeBaseName(outBaseName || defaultBase);
   if (writeFiles && exportModes.length > 0) {
-    const runTs = singleRunTimestamp ?? Date.now();
-    const outDir = outputDir || path.join(process.cwd(), 'result');
-    const defaultBase = sanitizeBaseName(baseArticle.slug || baseArticle.title || 'article');
-    const baseName = sanitizeBaseName(outBaseName || defaultBase);
-
     const exportStart = Date.now();
-
-    if (exportModes.includes('json')) {
-      const jsonPath = uniquePath(outDir, baseName, 'json', runTs);
-      fs.writeFileSync(jsonPath, JSON.stringify(articleJSON, null, 2), 'utf-8');
-      files.json = jsonPath;
-      if (verbose) console.log(`JSON saved to ${jsonPath}`);
-    }
     if (exportModes.includes('html')) {
       const htmlPath = uniquePath(outDir, baseName, 'html', runTs);
       const htmlBody = await markdownToHtml(baseArticle.body);
@@ -689,11 +466,48 @@ export async function generateArticle(options: GenerateArticleOptions): Promise<
       files.md = mdPath;
       if (verbose) console.log(`Markdown saved to ${mdPath}`);
     }
-
-    exportMs = Date.now() - exportStart;
+    exportMs = Date.now() - exportStart; // currently excludes JSON writing
   }
 
-  const totalMs = Date.now() - totalStart;
+  const totalMs = Date.now() - totalStart; // includes export work above
+
+  const timings: ArticleTimings = {
+    totalMs,
+    outlineMs: outlineMs!,
+    assembleMs,
+    exportMs,
+    outlineAttempts,
+  };
+
+  const articleJSON: ArticleJSON = {
+    ...baseArticle,
+    model,
+    status,
+    timings,
+    sectionTimings,
+    usage: {
+      outline: outlineUsage,
+      sections: sectionsUsage,
+      summaries: contextStrategy === 'summary' ? summaryUsage : undefined,
+      total: totalUsage,
+    },
+    cost: costs,
+  } as ArticleJSON;
+
+  if (writeFiles && exportModes.includes('json')) {
+    const jsonPath = uniquePath(outDir, baseName, 'json', runTs);
+    fs.writeFileSync(jsonPath, JSON.stringify(articleJSON, null, 2), 'utf-8');
+    files.json = jsonPath;
+    if (verbose) console.log(`JSON saved to ${jsonPath}`);
+  }
+
+  if (typeof options.onArticle === 'function') {
+    try {
+      await options.onArticle(articleJSON);
+    } catch (err) {
+      if (verbose) console.warn('[onArticle] callback error:', err);
+    }
+  }
 
   // Final combined preview + timings table (AFTER everything)
   if (verbose) {
@@ -743,7 +557,7 @@ export async function generateArticle(options: GenerateArticleOptions): Promise<
     const fmt = (n?: number) => (typeof n === 'number' ? formatUSD(n) : 'n/a');
 
     console.log('\n=== Usage & Cost ===');
-    console.log(`Provider: ${provider}  Model: ${model}`);
+    console.log(`Provider (mapped): ${provider}  Model: ${model}`);
     if (resolvedPrices.found) {
       console.log(
         `Pricing (per 1K tokens): input=${priceIn != null ? `$${priceIn}` : 'n/a'}  output=${priceOut != null ? `$${priceOut}` : 'n/a'}`
@@ -787,9 +601,33 @@ const isMain = import.meta.url === pathToFileURL(process.argv[1]).href;
 
 if (isMain) {
   (async () => {
-    const providerArg = (getArg('--provider') || 'openai').toLowerCase() as Provider;
-    const modelArg =
-      getArg('--model') || (providerArg === 'openai' ? process.env.OPENAI_MODEL : process.env.DEEPSEEK_MODEL);
+    if (process.argv.includes('--help') || process.argv.includes('-h')) {
+      const help = 'ghostwriter article generator\n\n' +
+        'Usage: tsx src/generate-article.ts [options]\n\n' +
+        'Options:\n' +
+        '  --model <model>                Model id (env fallback)\n' +
+        '  --topic <string>               Article topic\n' +
+        '  --keywords "a,b,c"            Comma list of keywords (required)\n' +
+        '  --min <num>                    Minimum word target (default 1000)\n' +
+        '  --max <num>                    Maximum word target (default 1400)\n' +
+        '  --tags "t1,t2"                Existing tags reference\n' +
+        '  --categories "c1,c2"          Existing categories reference\n' +
+        '  --style <notes>               Style notes\n' +
+        '  --lang <code>                 Language (default en)\n' +
+        '  --context <outline|full|summary> Context strategy (default outline)\n' +
+        '  --export <json,html,md|both|all> Export formats (default json)\n' +
+        '  --out <basename>              Output base filename override\n' +
+        '  --outdir <dir>                Output directory (default ./result)\n' +
+        '  --price-in <number>           Override input price per 1K tokens\n' +
+        '  --price-out <number>          Override output price per 1K tokens\n' +
+        '  --quiet                       Reduce log output\n' +
+        '  --verbose                     Force verbose output\n' +
+        '  --help                        Show this help\n\n' +
+        'Environment vars: OPENAI_API_KEY, DEEPSEEK_API_KEY, OPENAI_MODEL, DEEPSEEK_MODEL, PRICE_IN/PRICE_OUT or model-specific price vars.\n';
+      console.log(help);
+      process.exit(0);
+    }
+    const modelArg = getArg('--model') || process.env.OPENAI_MODEL || process.env.DEEPSEEK_MODEL;
     const topic = getArg('--topic') || 'The Future of AI in Web Development';
     const keywordsStr = getArg('--keywords') || 'AI in web development, JavaScript, SEO blog';
     const min = parseInt(getArg('--min') || '1000', 10);
@@ -814,7 +652,6 @@ if (isMain) {
     const existingCategories = categoriesStr.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
 
     await generateArticle({
-      provider: providerArg,
       model: modelArg,
       topic,
       keywords,

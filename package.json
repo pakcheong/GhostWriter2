@@ -17,7 +17,8 @@
     "gen": "tsx ./scripts/generate-article.ts",
     "publish:wp": "tsx ./scripts/publish-to-wp.ts",
     "lint": "eslint . --ext .ts",
-    "lint:fix": "eslint . --ext .ts --fix"
+    "lint:fix": "eslint . --ext .ts --fix",
+    "test": "tsx tests/run-all.ts"
   },
   "dependencies": {
     "@ai-sdk/openai": "^2.0.31",

@@ -1,8 +1,9 @@
-export {
-  generateArticle,
-  type GenerateArticleOptions,
-  type ArticleJSON,
-  type Provider,
-  type ContextStrategy,
-  type ExportMode,
-} from './src/generate-article.js';
+export { generateArticle } from './src/generate-article.js';
+export type {
+  GenerateArticleOptions,
+  ArticleJSON,
+  ContextStrategy,
+  ExportMode,
+  OutlineItem,
+  OutlineResult,
+} from './src/types.js';

@@ -18,7 +18,8 @@
     "publish:wp": "tsx ./scripts/publish-to-wp.ts",
     "lint": "eslint . --ext .ts",
     "lint:fix": "eslint . --ext .ts --fix",
-    "test": "tsx tests/run-all.ts"
+    "test": "tsx tests/run-all.ts",
+    "sample": "npm run build && tsx test.ts"
   },
   "dependencies": {
     "@ai-sdk/openai": "^2.0.31",

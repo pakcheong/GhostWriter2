@@ -65,6 +65,17 @@ export interface GenerateArticleOptions {
   printPreview?: boolean;
   printUsage?: boolean;
   onArticle?: (article: ArticleJSON) => void | Promise<void>; // callback after article assembled (before/after export)
+  /**
+   * Optional dynamic file base name pattern. Tokens:
+   *  [title] -> sanitized slug or title
+   *  [slug] -> outline slug
+   *  [timestamp] -> run timestamp (ms)
+   *  [date] -> YYYYMMDD
+   *  [time] -> HHmmss
+   * Example: '[timestamp]-[title]'
+   * Precedence: namePattern > outBaseName > derived slug/title.
+   */
+  namePattern?: string;
 }
 
 export type MaybeUsage = {

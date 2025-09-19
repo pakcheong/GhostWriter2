@@ -123,6 +123,7 @@ node ./dist/scripts/generate-article.js [options...]
 | `--export` | `json`\|`html`\|`md`\|`both`\|`all` | `json` | Output format(s). |
 | `--out` | string | Derived from slug | Base filename (no extension). |
 | `--outdir` | string | `./result` | Output directory. |
+| (programmatic) `namePattern` | string | none | Pattern tokens: `[timestamp]`, `[date]`, `[time]`, `[slug]`, `[title]`. Overrides `--out`. |
 | `--price-in` | number | from `.env` | Override input token price. |
 | `--price-out` | number | from `.env` | Override output token price. |
 | `--verbose` | flag | on (unless --quiet) | Prints per-section timing + usage/cost tables. |
@@ -184,6 +185,25 @@ Deterministic tests use a mock `__setGenerateTextImpl` to avoid network calls an
 `article.timings` includes `outlineMs`, `assembleMs`, `exportMs`, `totalMs`, `outlineAttempts`.
 `article.sectionTimings[]` lists per-section + per-subheading durations.
 `article.status` is `warning` if collapsed duplicate ratio in outline > 20%, else `success`.
+
+### Filename Patterns (programmatic API)
+Use `namePattern` in `generateArticle` options for dynamic filenames:
+
+Tokens:
+- `[timestamp]` run timestamp (ms)
+- `[date]` YYYYMMDD
+- `[time]` HHmmss
+- `[slug]` outline slug
+- `[title]` slug (fallback to sanitized title)
+
+Example:
+```ts
+await generateArticle({
+  ...opts,
+  namePattern: '[timestamp]-[title]',
+  exportModes: ['json','md'],
+}); // => 1695112345678-my-article.json / .md
+```
 
 ---
 

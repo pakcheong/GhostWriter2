@@ -448,7 +448,24 @@ export async function generateArticle(options: GenerateArticleOptions): Promise<
   const runTs = singleRunTimestamp ?? Date.now();
   const outDir = outputDir || path.join(process.cwd(), 'result');
   const defaultBase = sanitizeBaseName(baseArticle.slug || baseArticle.title || 'article');
-  const baseName = sanitizeBaseName(outBaseName || defaultBase);
+  let baseName: string;
+  if (options.namePattern) {
+    const ts = runTs;
+    const dateObj = new Date(ts);
+    const pad = (n: number, len = 2) => n.toString().padStart(len, '0');
+    const dateStr = `${dateObj.getFullYear()}${pad(dateObj.getMonth() + 1)}${pad(dateObj.getDate())}`;
+    const timeStr = `${pad(dateObj.getHours())}${pad(dateObj.getMinutes())}${pad(dateObj.getSeconds())}`;
+    const rawPattern = options.namePattern;
+    const replaced = rawPattern
+      .replaceAll('[timestamp]', String(ts))
+      .replaceAll('[date]', dateStr)
+      .replaceAll('[time]', timeStr)
+      .replaceAll('[slug]', baseArticle.slug || defaultBase)
+      .replaceAll('[title]', baseArticle.slug || defaultBase);
+    baseName = sanitizeBaseName(replaced);
+  } else {
+    baseName = sanitizeBaseName(outBaseName || defaultBase);
+  }
   if (writeFiles && exportModes.length > 0) {
     const exportStart = Date.now();
     if (exportModes.includes('html')) {

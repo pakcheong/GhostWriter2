@@ -1,29 +1,31 @@
-# Ghostwriter — SEO Article Generator
+# Ghostwriter — SEO Content Pipeline
 
-A TypeScript / Vercel AI SDK–based pipeline that generates SEO-ready blog articles (JSON/HTML/Markdown) for WordPress.
+TypeScript + Vercel AI SDK toolchain for generating SEO-ready content (articles, topic ideation, automated multi‑article batches) with JSON / HTML / Markdown exports.
 
-- Providers: **OpenAI** and **Deepseek**
-- Multi-language output (`--lang`)
-- Model-aware pricing estimates (from `.env` or CLI)
-- Context strategies for cohesion across sections
-- Strict Markdown body (no HTML), with safe HTML→Markdown fallback
-- Output formats: `json`, `html`, `md`
-- Verbose timing (per section) and total runtime
+- Models: **OpenAI**, **Deepseek**, **LM Studio (local)** (provider inferred from model id)
+- Multi-language output (`--lang` across all CLIs)
+- Model-aware pricing estimates (env + CLI overrides)
+- Context strategies for article cohesion (`outline | summary | full`)
+- Strict Markdown body (no inline HTML) with safe HTML→Markdown fallback
+- Output formats: `json`, `html`, `md` (combine via `--export all`)
+- Verbose timing + token usage + cost tables
+- Topic generation with filtering, scoring, rationale, risk flags
+- Automation: topics → parallel article generation with preserved order
 
 ---
 
 ## Features
 
-- **Two-phase generation**: _outline → subsections_ (+ optional per-section summary).
-- **Context strategies**:
-  - `outline`: minimal context (fastest)
-  - `full`: includes previous sections
-  - `summary`: includes summaries of previous sections
-- **Strict Markdown** with `**bold**` emphasis; HTML is auto-converted via Turndown if it leaks.
-- **Image placeholders**: each subsection includes one `[image]an image description[/image]`.
-- **Exports**: any combination of `json`, `html`, `md`.
-- **Pricing & usage**: token usage and cost estimates, model-aware via `.env` (or `--price-in/out` overrides).
-- **Verbose mode**: final table with **per-section timing** and **total runtime**; optional usage/cost table.
+- **Two-phase article generation**: outline → subsections (+ optional per-section summaries)
+- **Duplicate-aware outline** with merge + retry (status: `success|warning`)
+- **Context strategies**: `outline` (fast) | `summary` (balanced) | `full` (max cohesion)
+- **Strict Markdown** (HTML stripped → Turndown fallback) with emphasized `**keywords**`
+- **Image placeholders**: `[image]an image description[/image]` per subheading slot
+- **Exports**: pick any subset of `json`, `html`, `md` (`--export all` for all)
+- **Pricing & usage**: token counts + model-aware cost (env hierarchy or CLI overrides)
+- **Verbose mode**: per-section timing table + totals, optional usage/cost table
+- **Topics**: ideation list with rationale, confidence, risk flags, filtering & scoring
+- **Automation**: domain topics → batch article generation with concurrency & timing
 
 ---
 
@@ -39,7 +41,7 @@ Node 18+ recommended.
 
 ## Environment
 
-Create a `.env` file at project root:
+Create a `.env` file at project root (see `.env.example` for the full template):
 
 ```env
 # generic fallbacks (used only if model-specific prices are not set)
@@ -61,6 +63,15 @@ PRICE_DEEPSEEK_CHAT_IN=0.0002
 PRICE_DEEPSEEK_CHAT_OUT=0.0004
 PRICE_DEEPSEEK_CODER_IN=0.0005
 PRICE_DEEPSEEK_CODER_OUT=0.001
+
+# LM Studio (Local, optional)
+# If you run LM Studio's OpenAI-compatible server. Example: remote host 192.168.2.11
+LMSTUDIO_MODEL=openai/gpt-oss-20b
+LMSTUDIO_BASE_URL=http://192.168.2.11:1234/v1
+# LMSTUDIO_API_KEY=optional-if-required
+# LMSTUDIO_TIMEOUT_MS=900000        # (optional) request timeout (default 15m)
+# LMSTUDIO_STREAM=1                 # (optional) enable streaming accumulation
+# LMSTUDIO_WARM=1                   # (optional) initial /models warmup (default on)
 ```
 
 > Prices are per **1K tokens** (input/output). You can override via `--price-in` and `--price-out`.
@@ -77,41 +88,60 @@ Build artifacts go to `dist/`.
 
 ---
 
-## CLI Usage
+## CLI Overview
 
-Development (tsx):
+Three executables (after build or via `npx` if linked):
 
+| Command | Purpose | Primary Flags |
+|---------|---------|---------------|
+| `ghostwriter-article` | Single article generation | `--topic --keywords --context --export --lang` |
+| `ghostwriter-topics` | Topic ideation & filtering | `--domain --limit --include/--exclude --lang` |
+| `ghostwriter-auto` | Topics → multi-article batch | Topic + article flags + `--count --concurrency` |
+
+Quick start (article):
 ```bash
-npx tsx ./scripts/generate-article.ts \
-  --provider openai \
+npx ghostwriter-article \
   --model gpt-4o-mini \
   --topic "React 19: What Changes for Production Apps" \
   --keywords "react 19, transitions, actions, server components" \
-  --min 1200 \
-  --max 1800 \
-  --tags "react,frontend,release" \
-  --categories "technology,web" \
-  --style "actionable, authoritative, developer-friendly" \
-  --lang en \
-  --context summary \
-  --export all \
-  --out react-19-production \
-  --outdir ./result \
-  --verbose
+  --export all
 ```
 
-After build:
-
+Quick start (topics):
 ```bash
-node ./dist/scripts/generate-article.js [options...]
+npx ghostwriter-topics --domain "frontend performance" --limit 10 --include react,cache
 ```
 
-### Options
+Quick start (automation):
+```bash
+npx ghostwriter-auto \
+  --domain "web performance" \
+  --t-model gpt-4o-mini \
+  --a-model gpt-4o-mini \
+  --count -1 \
+  --concurrency 3 \
+  --export json
+```
+
+Development (tsx from source):
+```bash
+npx tsx src/article/cli.ts --topic "Edge Caching Strategies in 2025" --keywords "cdn,cache-control" --export md
+```
+
+Help:
+```bash
+ghostwriter-article --help
+ghostwriter-topics --help
+ghostwriter-auto --help
+```
+
+Below: detailed article CLI reference; topics & automation documented later.
+
+### Article CLI Options (`ghostwriter-article`)
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
-| `--provider` | `openai`\|`deepseek` | `openai` | Provider. |
-| `--model` | string | From `.env` (`OPENAI_MODEL`/`DEEPSEEK_MODEL`) | Model id to use. |
+| `--model` | string | From `.env` (`OPENAI_MODEL`/`DEEPSEEK_MODEL`) | Model id (provider inferred). |
 | `--topic` | string | `"The Future of AI in Web Development"` | Article topic seed. |
 | `--keywords` | csv | `"AI in web development, JavaScript, SEO blog"` | Global keywords to emphasize (`**bold**`). |
 | `--min` | number | `1000` | Target minimum words. |
@@ -121,23 +151,407 @@ node ./dist/scripts/generate-article.js [options...]
 | `--style` | string | `"helpful, concise, SEO-aware"` | Style/tone notes. |
 | `--lang` | string | `en` | Output language for text and image prompts. |
 | `--context` | `outline`\|`full`\|`summary` | `outline` | Cohesion strategy across sections. |
-| `--export` | `json`\|`html`\|`md`\|`both`\|`all` | `json` | Output format(s). |
+| `--export` | `json`\|`html`\|`md`\|`all` | `json` | Output format(s); `all` = json+html+md. |
 | `--out` | string | Derived from slug | Base filename (no extension). |
 | `--outdir` | string | `./result` | Output directory. |
+| (programmatic) `namePattern` | string | none | Pattern tokens: `[timestamp]`, `[date]`, `[time]`, `[slug]`, `[title]`. Overrides `--out`. |
 | `--price-in` | number | from `.env` | Override input token price. |
 | `--price-out` | number | from `.env` | Override output token price. |
-| `--verbose` | flag | off | Prints per-section timing + usage/cost tables. |
+| `--verbose` | flag | on (unless --quiet) | Prints per-section timing + usage/cost tables. |
 
 ---
 
-## Flow
+## Architecture & Flow
 
-1. **Outline generation**: article structure (title, description, tags, categories, sections + subheadings).
-2. **Section generation**: each subheading expanded into Markdown content with `[image]` placeholder.
-   - Context may include previous sections (`full`) or summaries (`summary`).
-3. **Summaries** (optional): concise per-section summaries if `--context summary`.
-4. **Assembly**: combine into full article object.
-5. **Export**: write JSON/HTML/Markdown outputs into `result/` (or `--outdir`).
+Why two phases? Outline-first keeps structure coherent and lets you retry/merge duplicates cheaply before spending tokens on full sections.
+
+1. Outline generation → structured JSON (title, description, tags, categories, sections + subheadings)
+2. Section generation → Markdown blocks (one `[image]...[/image]` placeholder per subheading)
+3. Optional summaries (only when `contextStrategy=summary`) → lightweight cohesion context
+4. Assembly → combine + compute usage, costs, timings
+5. Export → write selected formats (JSON/HTML/MD)
+
+Context strategy trade‑offs:
+- outline: fastest, lowest token use, weakest intra-section cohesion
+- full: highest cohesion (previous full sections appended) but slower and higher token usage
+- summary: middle ground; small per-section summaries reduce prompt growth
+
+Performance tips:
+- Use `outline` for bulk generation / draft mode.
+- Switch to `summary` when sections start referencing earlier material.
+- Use `full` only for highly narrative articles; watch token cost.
+- LM Studio: enable streaming (`LMSTUDIO_STREAM=1`) to reduce large response latency perception; keep warmup on.
+
+Programmatic usage:
+```ts
+import { generateArticle } from './src/generate-article.js';
+
+const { article, files } = await generateArticle({
+  topic: 'Edge Caching Strategies in 2025',
+  keywords: ['cdn','cache-control','stale-while-revalidate'],
+  existingTags: ['performance'],
+  existingCategories: ['infrastructure'],
+  contextStrategy: 'summary',
+  model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
+  exportModes: ['json','md'],
+  verbose: true,
+  onArticle(a) { console.log('Generated:', a.slug, 'in', a.timings.totalMs, 'ms'); }
+});
+
+console.log('Files:', files);
+```
+
+Export modes:
+- `json` → structured article object (includes timings, usage, cost)
+- `html` → Minimal HTML document (Markdown converted)
+- `md` → Front-matter style Markdown
+- `all` → `json` + `html` + `md`
+`both` removed (use comma list or `all`).
+
+Pricing resolution order (first match wins):
+1. CLI flags: `--price-in`, `--price-out`
+2. Model-specific env: e.g. `PRICE_GPT4O_MINI_IN`, `PRICE_DEEPSEEK_CHAT_OUT`
+3. Global env: `PRICE_IN`, `PRICE_OUT`
+4. If none found → `article.cost` omitted
+
+Usage collection:
+- If provider returns usage (OpenAI, Deepseek), real counts are used.
+- If missing (some LM Studio configs / streaming), heuristic token estimation fallback ensures totals are still present.
+
+Duplicate outline handling:
+- After generation, headings are normalized & merged.
+- Duplicate ratio = (originalHeadingCount - dedupedHeadingCount) / originalHeadingCount.
+- If ratio > 0.2 a single retry occurs; final status becomes `warning` if still > 0.2.
+
+Troubleshooting:
+| Symptom | Likely Cause | Fix |
+|--------|--------------|-----|
+| 404 from API | Wrong base URL or model id | Check env model vars; Deepseek requires `/v1`; LM Studio server running? |
+| Timeout (LM Studio) | Model cold / large load | Increase `LMSTUDIO_TIMEOUT_MS`, enable `LMSTUDIO_STREAM=1`, keep warmup on |
+| High duplicate ratio | Model repetitive outline | Adjust topic/keywords, accept warning, or retry manually |
+| Empty cost section | No pricing vars resolved | Set model-specific or global pricing env, or pass CLI overrides |
+| Large prompts slow | Using `full` context | Switch to `summary` or `outline` |
+| Missing usage tokens | Local provider no usage field | Accept heuristic estimation (still reflected in `usage.total`) |
+| Unknown model error | MODEL_PROVIDER_MAP miss | Add mapping entry in source and rebuild |
+
+Security / safety:
+- Never commit real API keys.
+- Generated content is not guaranteed factual; review before publishing.
+
+Result directory structure example (with `all`):
+```
+result/
+  edge-caching-strategies-in-2025.json
+  edge-caching-strategies-in-2025.html
+  edge-caching-strategies-in-2025.md
+```
+
+---
+
+## Architecture
+
+The codebase is modularized for clarity and testability:
+
+| Module | Purpose |
+|--------|---------|
+| `src/article/generate-article.ts` | Article orchestrator (outline → sections → summaries → assembly + export). |
+| `src/generate-article.ts` | Re-export convenience entry. |
+| `src/article/cli.ts` | Article CLI implementation. |
+| `src/topics/generate-topics.ts` | Topic ideation: scored list (title, rationale, confidence, riskFlags). |
+| `src/topics/cli.ts` | Topics CLI. |
+| `src/automation/auto-generate.ts` | Topics → multi-article concurrency orchestrator. |
+| `src/automation/cli.ts` | Automation CLI. |
+| `src/types.ts` | Shared type definitions (providers, strategies, article/result interfaces, timing structs). |
+| `src/prompts.ts` | All prompt construction helpers (outline / section / summary). Pure string builders. |
+| `src/model-config.ts` | Model→provider client resolution (OpenAI / Deepseek) |
+| (removed) `src/provider.ts` | Legacy (deleted) |
+| `src/usage.ts` | Usage extraction + token fallback estimation. |
+| `src/pricing.ts` | Price resolution logic (CLI > model-specific env > global env). |
+| `src/assembly.ts` | Article assembly + filename utilities + HTML/Markdown document builders + duration formatting. |
+| `src/utils.ts` | Cross-cutting utilities: Markdown sanitation, HTML→Markdown, token estimation, cost helpers. |
+| `tests/*.test.ts` | Lightweight assertion-based tests (no framework) for prompts, pricing, assembly. |
+| `src/topics/generate-topics.ts` | Topic ideation: returns scored list (title, rationale, confidence, riskFlags). |
+| `src/automation/auto-generate.ts` | High-level: topics → multi-article generation with concurrency + timings. |
+
+### Data / Control Flow
+1. CLI parses args → resolves model + pricing.
+2. `generateOutlineInternal` builds outline prompt → model call → JSON sanitized.
+3. For each section/subheading: `generateSubsectionMarkdownInternal` builds contextual messages + model call.
+4. Optional summaries per section when `contextStrategy === 'summary'`.
+5. `assembleArticle` combines sanitized blocks → `ArticleJSON` enriched with usage + cost.
+6. Export helpers produce `json`, `html` (Markdown → HTML), and `md` (front matter style) files.
+
+### Extending
+- Add a new model: extend `MODEL_PROVIDER_MAP` in `generate-article.ts` (maps model id → provider).
+- New context strategy: adjust loop in `generate-article.ts` and add message injection logic similar to `full/summary` branches.
+- Additional export format: implement in `assembly.ts` (e.g., `buildRssItem`) and wire into export switch.
+- More pricing models: expand `MODEL_ENV_MAP` in `pricing.ts`.
+
+#### LM Studio Models
+Local models served via LM Studio are treated as `provider = lmstudio` and use an OpenAI-compatible API. To map a custom local model id (as shown in LM Studio UI) add an entry:
+
+```ts
+// in generate-article.ts
+const MODEL_PROVIDER_MAP = {
+  ...,
+  'my-local-model': 'lmstudio'
+};
+```
+
+Environment variables:
+```env
+LMSTUDIO_MODEL=my-local-model
+LMSTUDIO_BASE_URL=http://localhost:1234/v1
+LMSTUDIO_API_KEY=optional
+```
+If `LMSTUDIO_API_KEY` is not set a placeholder key is used (LM Studio usually does not require one locally).
+
+### Testing Philosophy
+Deterministic tests use a mock `__setGenerateTextImpl` to avoid network calls and assert:
+- JSON shape (no `provider`, includes `timings`, `sectionTimings`, `status`).
+- Callback invocation (`onArticle`).
+- Pricing & usage aggregation.
+
+### Callback
+`onArticle?: (article: ArticleJSON) => void | Promise<void>` fires after the article object (with timings/status) is built and before function returns. Use it for streaming, additional persistence, or custom logging.
+
+Example callback payload (annotated):
+
+```jsonc
+{
+  "title": "React 19: Key Changes Impacting Production Apps", // Article title generated in outline phase
+  "description": "Explore significant updates in React 19 and their implications...", // Short SEO meta description
+  "body": "## Introduction\n...", // Complete Markdown body (sections + subheadings)
+  "tags": ["react", "frontend", "release"], // Final tag set (normalized & deduped)
+  "categories": ["technology", "web"], // Final category set
+  "slug": "react-19-key-changes-impacting-production-apps", // URL/file-safe slug derived from title
+  "model": "gpt-4o-mini", // Model id used (provider inferred internally)
+  "status": "success", // 'success' | 'warning' (warning when duplicate outline ratio > 20%)
+  "timings": {
+    "totalMs": 8421, // End-to-end runtime including export phase
+    "outlineMs": 612, // Time to generate (and possibly retry) outline
+    "assembleMs": 15, // Time to assemble article object & aggregate metrics
+    "exportMs": 58, // Time writing non-JSON exports
+    "outlineAttempts": 1, // Number of outline generations (max 2 when duplication high)
+    "startTime": 1758267800123, // Epoch ms when run started
+    "endTime": 1758267808544 // Epoch ms when run finished
+  },
+  "sectionTimings": [
+    {
+      "heading": "Introduction", // Section H2 heading
+      "subheadingCount": 3, // Number of subheadings expanded under this section
+      "ms": 1120, // Total ms for all subheadings (+ summary if generated)
+      "subTimings": [ // Per-subheading generation durations
+        { "title": "Why React 19 Matters", "ms": 340 },
+        { "title": "Release Cadence Changes", "ms": 392 },
+        { "title": "Ecosystem Impact", "ms": 388 }
+      ],
+      "summaryMs": 74 // Present only when contextStrategy === 'summary'
+    }
+    // ...additional sections
+  ],
+  "usage": {
+    "outline": { "promptTokens": 620, "completionTokens": 210, "totalTokens": 830 }, // Outline phase usage
+    "sections": { "promptTokens": 4820, "completionTokens": 3980, "totalTokens": 8800 }, // Aggregate of all subsection calls
+    "summaries": { "promptTokens": 320, "completionTokens": 180, "totalTokens": 500 }, // Present only for summary strategy
+    "total": { "promptTokens": 5760, "completionTokens": 4370, "totalTokens": 10130 } // Sum of all phases
+  },
+  "cost": { // Present only if pricing resolved
+    "outline": 0.0042, // USD estimate for outline
+    "sections": 0.0584, // USD estimate for sections
+    "summaries": 0.0031, // USD estimate for summaries (if any)
+    "total": 0.0657, // Sum of available phase costs
+    "priceInPerK": 0.0003, // Input token price ($ per 1K)
+    "priceOutPerK": 0.0006 // Output token price ($ per 1K)
+  }
+}
+```
+
+Field reference summary:
+- title: Generated main article title.
+- description: Short SEO description.
+- body: Full Markdown content.
+- tags / categories: Final normalized lists.
+- slug: Safe identifier used for filenames.
+- model: Model id (provider not exposed separately).
+- status: Quality flag (duplicate outline ratio > threshold => warning).
+- timings: Aggregate phase durations + run boundaries.
+- sectionTimings: Per section timing + per-subheading breakdown.
+- usage: Token counts per phase (prompt/completion/total) + aggregate.
+- cost: Phase cost estimates & pricing (may be absent if pricing unknown).
+- outlineMs / assembleMs / exportMs: Individual timing components inside timings.
+- outlineAttempts: Outline retry count (max 2).
+- startTime / endTime: Wall-clock epoch ms boundaries of the run.
+- subTimings: Fine-grained per-subheading durations.
+- summaryMs: Time spent generating a section summary (only in summary strategy).
+
+### Timings & Status
+`article.timings` includes `outlineMs`, `assembleMs`, `exportMs`, `totalMs`, `outlineAttempts`.
+`article.sectionTimings[]` lists per-section + per-subheading durations.
+`article.status` is `warning` if collapsed duplicate ratio in outline > 20%, else `success`.
+
+### Filename Patterns (programmatic API)
+Use `namePattern` to dynamically construct filenames. Tokens:
+
+| Token | Meaning |
+|-------|---------|
+| `[timestamp]` | Milliseconds at run start |
+| `[date]` | UTC date `YYYYMMDD` |
+| `[time]` | UTC time `HHmmss` |
+| `[slug]` | Article slug derived from title |
+| `[title]` | Slugified title (fallback) |
+
+Example:
+```ts
+await generateArticle({
+  ...opts,
+  namePattern: '[date]-[slug]',
+  exportModes: ['json','md']
+});
+```
+
+---
+## Topics CLI (`ghostwriter-topics`)
+
+Generate candidate ideas for a domain / niche:
+```bash
+ghostwriter-topics --domain "modern frontend" --limit 12 --include react,performance --exclude legacy
+```
+
+Key flags:
+- `--domain <string>` (required)
+- `--limit <n>` final topic target (internal over-generation)
+- Filtering: `--include`, `--exclude`, `--include-regex`, `--exclude-regex`
+- Language enforcement: `--lang`
+- Pricing: `--price-in`, `--price-out`
+- Usage table: `--usage` (force print)
+
+Per topic: `title`, `rationale`, `confidence`, `riskFlags[]` (e.g. `speculative`, `maybe-outdated`). Scoring heuristic ranks before selection.
+
+Filtering order: includeKeywords → excludeKeywords → includeRegex → excludeRegex. If all filtered out, reverts to unfiltered deduped list.
+
+---
+## Automation CLI (`ghostwriter-auto`)
+
+End-to-end batch: generate topics then multiple articles concurrently.
+```bash
+ghostwriter-auto \
+  --domain "web performance" \
+  --t-model gpt-4o-mini \
+  --a-model gpt-4o-mini \
+  --count 5 \
+  --concurrency 3 \
+  --export json
+```
+
+Important flags:
+- Topic phase: `--domain`, `--t-model`, `--t-limit`, filters, `--lang`
+- Article phase: `--a-model`, `--min`, `--max`, `--context`, `--export`, `--tags`, `--categories`, `--style`, `--name-pattern`
+- Automation: `--count <n|-1>` (`-1` or omit = all), `--concurrency <n>`
+
+Behavior:
+- Preserves topic order under concurrency
+- Per-article errors caught (verbose logs); failed slots left undefined
+- Timings: `topicsMs`, `articlesMs`, `totalMs` + boundaries
+
+Use for scheduled batches, editorial ideation → draft generation, or domain coverage.
+
+---
+## Programmatic APIs Summary
+Import paths:
+```ts
+import { generateArticle } from './src/article/generate-article.js';
+import { generateTopics } from './src/topics/generate-topics.js';
+import { autoGenerateArticlesFromTopics } from './src/automation/auto-generate.js';
+```
+
+---
+## Roadmap / Potential Enhancements
+- WordPress publishing helper (`publish-to-wp.ts`) for bulk post creation (expects JSON bundle with `items[]`).
+- Retry & backoff for subsection failures
+- Optional streamed / incremental exports
+- Additional formats (RSS item, sitemap fragment)
+- More granular quiet vs usage table controls
+- Pluggable scoring for topics
+- Post-generation validation hooks
+## Topics Generation
+
+Programmatic example:
+```ts
+import { generateTopics } from './src/topics/generate-topics.js';
+
+const result = await generateTopics({
+  domain: 'frontend engineering',
+  model: 'gpt-4o-mini',
+  limit: 12,
+  lang: 'en',             // optional: enforce language for titles & rationale
+  includeKeywords: ['react','performance'], // OR use includeRegex
+  excludeRegex: 'legacy|deprecated',
+  printUsage: true,
+  verbose: true,
+});
+
+console.log(result.topics[0]);
+```
+
+Returned fields per topic:
+- `title`
+- `rationale`
+- `confidence` (0–1)
+- `riskFlags` (array, may contain: `maybe-outdated`, `speculative`, `broad` — empty array when none)
+
+Filtering precedence (applied post-dedupe, pre-scoring):
+1. `includeKeywords` (OR match)
+2. `excludeKeywords`
+3. `includeRegex`
+4. `excludeRegex`
+
+If all filters eliminate results → fallback to unfiltered deduped list.
+
+Scoring heuristic: `(confidence || 0.55) - riskFlags.length * 0.05` descending.
+
+## Automation (Topics → Articles)
+
+```ts
+import { autoGenerateArticlesFromTopics } from './src/automation/auto-generate.js';
+
+const res = await autoGenerateArticlesFromTopics({
+  topics: { domain: 'web performance', model: 'gpt-4o-mini', limit: 12, lang: 'en' },
+  article: { model: 'gpt-4o-mini', exportModes: ['json'], contextStrategy: 'outline' },
+  // count: -1, // -1 or omitted = generate articles for ALL topics returned
+  concurrency: 4, // default 2 if omitted
+  verbose: true,
+  onArticle(a, i) { console.log('Article', i, a.title); }
+});
+
+console.log(res.timings); // { topicsMs, articlesMs, totalMs, ... }
+```
+
+Options summary:
+- `count`: number of top topics to convert; `-1` or `undefined` → all.
+- `concurrency`: max parallel article generations (default `2`).
+- Preserves topic order even under concurrency.
+- `timings` in result: `startTime`, `topicsEndTime`, `endTime`, `topicsMs`, `articlesMs`, `totalMs`.
+
+Error handling: per-article errors are caught and logged (when `verbose`); failed slots remain `undefined` in `articles` array (can be post-filtered).
+
+Use `namePattern` in `generateArticle` options for dynamic filenames:
+
+Tokens:
+- `[timestamp]` run timestamp (ms)
+- `[date]` YYYYMMDD
+- `[time]` HHmmss
+- `[slug]` outline slug
+- `[title]` slug (fallback to sanitized title)
+
+Example:
+```ts
+await generateArticle({
+  ...opts,
+  namePattern: '[timestamp]-[title]',
+  exportModes: ['json','md'],
+}); // => 1695112345678-my-article.json / .md
+```
 
 ---
 

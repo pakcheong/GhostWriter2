@@ -39,12 +39,27 @@ export function sanitizeMarkdown(input: string): string {
     masked = turndown.turndown(masked);
   }
 
-  placeholders.forEach((ph, idx) => {
-    masked = masked.replace(`___IMAGE_PLACEHOLDER_${idx}___`, ph);
-  });
-
-  return masked.trim();
+  placeholders.forEach((ph, idx) => { masked = masked.replace(`___IMAGE_PLACEHOLDER_${idx}___`, ph); });
+  // Inline normalization of escaped markdown artifacts & leaked placeholders
+  let out = masked.trim();
+  out = out.replace(/___IMAGE_PLACEHOLDER_\d+___/g, '');
+  out = out.replace(/\\\*\*([^*]+)\\\*\*/g, '**$1**');
+  out = out.replace(/\\\*([^*]+)\\\*/g, '*$1*');
+  out = out.replace(/\\_\\_([^_]+)\\_\\_/g, '__$1__');
+  out = out.replace(/\\_([^_]+)\\_/g, '_$1_');
+  out = out.replace(/\\`/g, '`');
+  out = out.replace(/\n{3,}/g, '\n\n');
+  return out;
 }
+
+/**
+ * Normalize model-generated markdown by:
+ * - Unescaping backslash-escaped asterisks and underscores used for formatting (e.g. \*\*bold\*\* -> **bold**)
+ * - Removing any stray placeholder artifacts like ___IMAGE_PLACEHOLDER_0___ that leaked through
+ * - Collapsing excessive blank lines (3+ -> 2)
+ */
+// Deprecated: no longer needed externally; kept for backward compatibility
+export function normalizeGeneratedMarkdown(markdown: string): string { return sanitizeMarkdown(markdown); }
 
 /* ---------------- Markdown → HTML ---------------- */
 

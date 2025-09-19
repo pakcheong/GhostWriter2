@@ -124,6 +124,7 @@ export async function generateArticle(options: GenerateArticleOptions): Promise<
     sectionTimings.push({ heading: sec.heading, subheadingCount: sec.subheadings?.length ?? 0, ms: secMs, subTimings, summaryMs });
   }
   const assembleStart = Date.now(); const baseArticle = assembleArticle({ meta: outline, sections: sectionBlocks }); const assembleMs = Date.now() - assembleStart;
+  // Normalize markdown to remove escape artifacts / leaked placeholders
   const resolvedPrices = resolvePrices(model, priceInPerK, priceOutPerK); const priceIn = resolvedPrices.in; const priceOut = resolvedPrices.out;
   const totalUsage: Usage = addUsage(addUsage(outlineUsage, sectionsUsage), summaryUsage);
   const costs = resolvedPrices.found ? { outline: costEstimate(outlineUsage, priceIn ?? 0, priceOut ?? 0), sections: costEstimate(sectionsUsage, priceIn ?? 0, priceOut ?? 0), summaries: contextStrategy === 'summary' ? costEstimate(summaryUsage, priceIn ?? 0, priceOut ?? 0) : undefined, total: costEstimate(totalUsage, priceIn ?? 0, priceOut ?? 0), priceInPerK: priceIn ?? undefined, priceOutPerK: priceOut ?? undefined } : undefined;

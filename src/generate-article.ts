@@ -5,13 +5,11 @@ import { generateText as realGenerateText } from 'ai';
 import fs from 'fs';
 import path from 'path';
 import dotenv from 'dotenv';
-import { pathToFileURL } from 'url';
 import Table from 'cli-table3';
 
 import {
   sanitizeMarkdown,
   markdownToHtml,
-  getArg,
   sanitizeToJSONObject,
   type Usage,
   emptyUsage,
@@ -19,12 +17,13 @@ import {
   formatUSD,
   costEstimate,
 } from './utils.js';
-import type { ContextStrategy, ExportMode, OutlineItem, OutlineResult, ArticleJSON, GenerateArticleOptions, SectionTiming, SubTiming, ArticleTimings } from './types.js';
+import type { ContextStrategy, OutlineItem, OutlineResult, ArticleJSON, GenerateArticleOptions, SectionTiming, SubTiming, ArticleTimings } from './types.js';
 import { buildOutlinePrompt, buildSectionPrompt, buildSummaryPrompt } from './prompts.js';
 import { getClientForProvider } from './model-config.js';
 
 // Explicit model→provider mapping. Add entries as needed.
-const MODEL_PROVIDER_MAP: Record<string, 'openai' | 'deepseek'> = {
+// Added 'lmstudio' for local LM Studio OpenAI-compatible server models.
+const MODEL_PROVIDER_MAP: Record<string, 'openai' | 'deepseek' | 'lmstudio'> = {
   'gpt-4o-mini': 'openai',
   'gpt-4o': 'openai',
   'gpt-4.1': 'openai',
@@ -33,9 +32,16 @@ const MODEL_PROVIDER_MAP: Record<string, 'openai' | 'deepseek'> = {
   'text-davinci-003': 'openai',
   'deepseek-chat': 'deepseek',
   'deepseek-reasoner': 'deepseek',
+  // Common LM Studio model aliases (user can adjust):
+  'llama-3': 'lmstudio',
+  'llama-3.1': 'lmstudio',
+  'qwen2': 'lmstudio',
+  'phi-3': 'lmstudio',
+  'mistral': 'lmstudio',
+  'openai/gpt-oss-20b': 'lmstudio',
 };
 
-function resolveProviderForModel(model: string): 'openai' | 'deepseek' {
+function resolveProviderForModel(model: string): 'openai' | 'deepseek' | 'lmstudio' {
   const key = model.toLowerCase();
   if (MODEL_PROVIDER_MAP[key]) return MODEL_PROVIDER_MAP[key];
   throw new Error(`Unknown model '${model}'. Please add it to MODEL_PROVIDER_MAP.`);
@@ -53,6 +59,9 @@ let _generateTextImpl: typeof realGenerateText | ((args: any) => Promise<any>) =
 export function __setGenerateTextImpl(fn: typeof realGenerateText | ((args: any) => Promise<any>)) {
   _generateTextImpl = fn;
 }
+
+// Track whether we've performed a one-time warmup call for LM Studio to pre-load model.
+let _lmstudioWarmed = false;
 
 async function safeGenerateText(args: any, context: { provider: string; model: string; phase: string }) {
   try {
@@ -96,6 +105,111 @@ async function safeGenerateText(args: any, context: { provider: string; model: s
         : undefined;
       return { text: content, usage };
     }
+    if (context.provider === 'lmstudio') {
+      // Many LM Studio builds expose OpenAI-style /chat/completions but may not support the new /responses endpoint shape.
+      // Fallback to direct fetch similar to deepseek path.
+      let base = process.env.LMSTUDIO_BASE_URL || 'http://localhost:1234/v1';
+      if (!/\/v\d+$/.test(base)) base = base.replace(/\/$/, '') + '/v1';
+      const url = base.replace(/\/$/, '') + '/chat/completions';
+
+      // Optional warmup (load model to RAM) to reduce initial headers delay.
+      if (!_lmstudioWarmed && process.env.LMSTUDIO_WARM !== '0') {
+        try {
+          const warmResp = await fetch(base.replace(/\/$/, '') + '/models', { method: 'GET' });
+          if (warmResp.ok) _lmstudioWarmed = true;
+        } catch {/* ignore warm errors */}
+      }
+
+      // Normalize messages.
+      const messages = args.messages
+        ? args.messages.map((m: any) => ({ role: m.role, content: typeof m.content === 'string' ? m.content : (Array.isArray(m.content) ? m.content.map((c: any) => c?.text || JSON.stringify(c)).join('\n') : JSON.stringify(m.content)) }))
+        : [{ role: 'user', content: args.prompt }];
+
+      const body: any = { model: context.model, messages };
+      if (args.temperature != null) body.temperature = args.temperature;
+
+      const wantStream = process.env.LMSTUDIO_STREAM === '1'; // opt-in streaming only (safer default for tests)
+      if (wantStream) body.stream = true;
+
+  const timeoutMs = parseInt(process.env.LMSTUDIO_TIMEOUT_MS || '900000', 10); // default 15m
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
+      let resp: Response;
+      try {
+        resp = await fetch(url, {
+          method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+            signal: controller.signal,
+        });
+      } catch (e: any) {
+        clearTimeout(timer);
+        if (e?.name === 'AbortError') {
+          throw new Error(`LM Studio request aborted after ${timeoutMs}ms. You can raise LMSTUDIO_TIMEOUT_MS or enable streaming (LMSTUDIO_STREAM=1).`);
+        }
+        throw e;
+      }
+      clearTimeout(timer);
+      if (!resp.ok) {
+        const txt = await resp.text().catch(() => '');
+        throw new Error(`LM Studio API error ${resp.status}: ${txt}`);
+      }
+
+      if (wantStream) {
+        // SSE-like stream with lines beginning 'data:'. Accumulate delta content.
+        const reader = resp.body?.getReader();
+        if (!reader) {
+          // Fallback to non-stream parse.
+          const fallback = await resp.text();
+          try {
+            const parsed = JSON.parse(fallback);
+            const content = parsed.choices?.[0]?.message?.content || fallback;
+            return { text: content, usage: undefined };
+          } catch {
+            return { text: fallback, usage: undefined };
+          }
+        }
+        const decoder = new TextDecoder();
+        let buf = '';
+        let assembled = '';
+        while (true) {
+          const { done, value } = await reader.read();
+            if (done) break;
+            buf += decoder.decode(value, { stream: true });
+            const lines = buf.split(/\r?\n/);
+            buf = lines.pop() || '';
+            for (const line of lines) {
+              const trimmed = line.trim();
+              if (!trimmed) continue;
+              if (trimmed.startsWith('data:')) {
+                const jsonStr = trimmed.slice(5).trim();
+                if (jsonStr === '[DONE]') continue;
+                try {
+                  const deltaObj = JSON.parse(jsonStr);
+                  const delta = deltaObj.choices?.[0]?.delta?.content || deltaObj.choices?.[0]?.message?.content;
+                  if (delta) assembled += delta;
+                } catch {/* ignore parse errors */}
+              } else {
+                // Raw text fallback.
+                assembled += trimmed + '\n';
+              }
+            }
+        }
+        return { text: assembled.trim(), usage: undefined };
+      }
+
+      // Non-stream path: parse JSON fully.
+      const json: any = await resp.json().catch(async () => ({ raw: await resp.text() }));
+      const content = json.choices?.[0]?.message?.content || json.raw || '';
+      const usage = json.usage
+        ? {
+            promptTokens: json.usage.prompt_tokens,
+            completionTokens: json.usage.completion_tokens,
+            totalTokens: json.usage.total_tokens,
+          }
+        : undefined;
+      return { text: content, usage };
+    }
     return await _generateTextImpl(args);
   } catch (err: any) {
     const status = err?.statusCode || err?.status || err?.code;
@@ -112,6 +226,12 @@ async function safeGenerateText(args: any, context: { provider: string; model: s
           "Confirm model name (e.g. 'deepseek-chat').",
           'Unset OPENAI_MODEL if it incorrectly overrides Deepseek model.',
           'Set DEEPSEEK_MODEL or pass model explicitly.'
+        );
+      } else if (context.provider === 'lmstudio') {
+        hints.push(
+          'Hints: Ensure LM Studio server running (default http://localhost:1234).',
+          'Set LMSTUDIO_BASE_URL if using a different port/path.',
+          'Confirm the model name matches one shown in LM Studio UI.'
         );
       } else if (context.provider === 'openai') {
         hints.push('Hints: Using an OpenAI provider; model should start with gpt- or o.*');
@@ -306,7 +426,7 @@ export async function generateArticle(options: GenerateArticleOptions): Promise<
   // For backwards compatibility: preview is now printed at the end, ignore printPreview flag.
   const printUsage = typeof printUsageOpt === 'boolean' ? printUsageOpt : verbose;
 
-  const envModel = process.env.OPENAI_MODEL || process.env.DEEPSEEK_MODEL;
+  const envModel = process.env.OPENAI_MODEL || process.env.DEEPSEEK_MODEL || process.env.LMSTUDIO_MODEL;
   const model = modelInput || envModel || 'gpt-4o-mini';
   const provider = resolveProviderForModel(model);
 
@@ -488,12 +608,20 @@ export async function generateArticle(options: GenerateArticleOptions): Promise<
 
   const totalMs = Date.now() - totalStart; // includes export work above
 
+  const endTimeNow = Date.now();
+  let computedEnd = endTimeNow;
+  if (computedEnd < totalStart) {
+    // System clock adjustment detected; fallback to monotonic style reconstruction.
+    computedEnd = totalStart + totalMs;
+  }
   const timings: ArticleTimings = {
     totalMs,
     outlineMs: outlineMs!,
     assembleMs,
     exportMs,
     outlineAttempts,
+    startTime: totalStart,
+    endTime: computedEnd,
   };
 
   const articleJSON: ArticleJSON = {
@@ -595,100 +723,4 @@ export async function generateArticle(options: GenerateArticleOptions): Promise<
   }
 
   return { article: articleJSON, files: Object.keys(files).length ? files : undefined };
-}
-
-/** ===================== CLI wrapper ===================== */
-
-function parseExportModes(raw?: string): ExportMode[] {
-  if (!raw) return ['json'];
-  const lower = raw.toLowerCase().trim();
-  if (lower === 'both') return ['json', 'html'];
-  if (lower === 'all') return ['json', 'html', 'md'];
-  const parts = lower.split(',').map((s) => s.trim()).filter(Boolean);
-  const allowed: ExportMode[] = [];
-  for (const p of parts) {
-    if (p === 'json' || p === 'html' || p === 'md') {
-      if (!allowed.includes(p)) allowed.push(p);
-    }
-  }
-  return allowed.length ? allowed : ['json'];
-}
-
-const isMain = import.meta.url === pathToFileURL(process.argv[1]).href;
-
-if (isMain) {
-  (async () => {
-    if (process.argv.includes('--help') || process.argv.includes('-h')) {
-      const help = 'ghostwriter article generator\n\n' +
-        'Usage: tsx src/generate-article.ts [options]\n\n' +
-        'Options:\n' +
-        '  --model <model>                Model id (env fallback)\n' +
-        '  --topic <string>               Article topic\n' +
-        '  --keywords "a,b,c"            Comma list of keywords (required)\n' +
-        '  --min <num>                    Minimum word target (default 1000)\n' +
-        '  --max <num>                    Maximum word target (default 1400)\n' +
-        '  --tags "t1,t2"                Existing tags reference\n' +
-        '  --categories "c1,c2"          Existing categories reference\n' +
-        '  --style <notes>               Style notes\n' +
-        '  --lang <code>                 Language (default en)\n' +
-        '  --context <outline|full|summary> Context strategy (default outline)\n' +
-        '  --export <json,html,md|both|all> Export formats (default json)\n' +
-        '  --out <basename>              Output base filename override\n' +
-        '  --outdir <dir>                Output directory (default ./result)\n' +
-        '  --price-in <number>           Override input price per 1K tokens\n' +
-        '  --price-out <number>          Override output price per 1K tokens\n' +
-        '  --quiet                       Reduce log output\n' +
-        '  --verbose                     Force verbose output\n' +
-        '  --help                        Show this help\n\n' +
-        'Environment vars: OPENAI_API_KEY, DEEPSEEK_API_KEY, OPENAI_MODEL, DEEPSEEK_MODEL, PRICE_IN/PRICE_OUT or model-specific price vars.\n';
-      console.log(help);
-      process.exit(0);
-    }
-    const modelArg = getArg('--model') || process.env.OPENAI_MODEL || process.env.DEEPSEEK_MODEL;
-    const topic = getArg('--topic') || 'The Future of AI in Web Development';
-    const keywordsStr = getArg('--keywords') || 'AI in web development, JavaScript, SEO blog';
-    const min = parseInt(getArg('--min') || '1000', 10);
-    const max = parseInt(getArg('--max') || '1400', 10);
-    const tagsStr = getArg('--tags') || 'javascript, web development, ai';
-    const categoriesStr = getArg('--categories') || 'technology, programming';
-    const styleNotes = getArg('--style') || 'helpful, concise, SEO-aware';
-    const langArg = getArg('--lang') || 'en';
-    const contextStrategy = (getArg('--context') || 'outline') as ContextStrategy;
-    const exportModes = parseExportModes(getArg('--export'));
-    const outArg = getArg('--out');
-    const outDirArg = getArg('--outdir') || path.join(process.cwd(), 'result');
-    const priceInArg = getArg('--price-in');
-    const priceOutArg = getArg('--price-out');
-
-    const quietFlag = process.argv.includes('--quiet');
-    const verboseFlag = process.argv.includes('--verbose');
-    const verbose = verboseFlag ? true : quietFlag ? false : true;
-
-    const keywords = keywordsStr.split(',').map((s) => s.trim()).filter(Boolean);
-    const existingTags = tagsStr.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
-    const existingCategories = categoriesStr.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
-
-    await generateArticle({
-      model: modelArg,
-      topic,
-      keywords,
-      minWords: min,
-      maxWords: max,
-      existingTags,
-      existingCategories,
-      styleNotes,
-      lang: langArg,
-      contextStrategy,
-      exportModes,
-      outBaseName: outArg,
-      outputDir: outDirArg,
-      writeFiles: true,
-      priceInPerK: priceInArg,
-      priceOutPerK: priceOutArg,
-      verbose,
-    });
-  })().catch((err) => {
-    console.error(err?.message || err);
-    process.exit(1);
-  });
 }

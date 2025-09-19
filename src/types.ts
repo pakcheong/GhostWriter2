@@ -99,6 +99,8 @@ export interface ArticleTimings {
   assembleMs: number;
   exportMs: number;
   outlineAttempts: number;
+  startTime: number;
+  endTime: number;
 }
 
 export type ArticleStatus = 'success' | 'warning';

@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
-import { sanitizeMarkdown } from './utils.js';
-import type { ArticleBase, OutlineResult } from './types.js';
+import { sanitizeMarkdown } from '../utils.js';
+import type { ArticleBase, OutlineResult } from '../types.js';
 
 export function assembleArticle(params: { meta: OutlineResult; sections: string[] }): ArticleBase {
   return {

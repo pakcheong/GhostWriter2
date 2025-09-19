@@ -1,19 +1,17 @@
-import { generateArticle, __setGenerateTextImpl } from '../src/generate-article.js';
+import { generateArticle, __setGenerateTextImpl } from '../src/article/generate-article.js';
 import assert from 'assert';
 
 __setGenerateTextImpl(async (req: any) => {
   const content = req.prompt || (req.messages||[]).map((m: any)=>m.content).join('\n');
-  if (content.includes('outline') || content.includes('JSON schema')) {
+  if (content.includes('You are a precise SEO writer')) {
+    return { text: 'Body **A** [image]x[/image]', usage: { promptTokens:1, completionTokens:1, totalTokens:2 } };
+  }
+  if (content.includes('outline') || content.includes('STRICT JSON') || content.includes('"slug"')) {
     return { text: JSON.stringify({
-      title: 'Pattern Title',
-      description: 'Desc',
-      slug: 'pattern-title',
-      tags: [],
-      categories: [],
-      outline: [ { heading: 'One', subheadings: ['A'] } ]
+      title: 'Pattern Title', description: 'Desc', slug: 'pattern-title', tags: [], categories: [], outline: [ { heading: 'One', subheadings: ['A'] } ]
     }), usage: { promptTokens:1, completionTokens:1, totalTokens:2 }};
   }
-  return { text: 'Body **A** [image]x[/image]', usage: { promptTokens:1, completionTokens:1, totalTokens:2 } };
+  return { text: 'Fallback body', usage: { promptTokens:1, completionTokens:1, totalTokens:2 } };
 });
 
 const runTs = 1111111111111; // deterministic

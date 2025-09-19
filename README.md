@@ -1,30 +1,31 @@
-# Ghostwriter — SEO Article Generator
+# Ghostwriter — SEO Content Pipeline
 
-TypeScript + Vercel AI SDK pipeline that generates SEO-ready blog articles (JSON/HTML/Markdown) for WordPress.
+TypeScript + Vercel AI SDK toolchain for generating SEO-ready content (articles, topic ideation, automated multi‑article batches) with JSON / HTML / Markdown exports.
 
-- Models: **OpenAI** + **Deepseek** + **LM Studio (local)** (auto-mapped; no provider flag)
-- Multi-language output (`--lang`)
-- Model-aware pricing estimates (from `.env` or CLI)
-- Context strategies for cohesion across sections
-- Strict Markdown body (no HTML), with safe HTML→Markdown fallback
-- Output formats: `json`, `html`, `md`
-- Verbose timing (per section) and total runtime
+- Models: **OpenAI**, **Deepseek**, **LM Studio (local)** (provider inferred from model id)
+- Multi-language output (`--lang` across all CLIs)
+- Model-aware pricing estimates (env + CLI overrides)
+- Context strategies for article cohesion (`outline | summary | full`)
+- Strict Markdown body (no inline HTML) with safe HTML→Markdown fallback
+- Output formats: `json`, `html`, `md` (combine via `--export all`)
+- Verbose timing + token usage + cost tables
+- Topic generation with filtering, scoring, rationale, risk flags
+- Automation: topics → parallel article generation with preserved order
 
 ---
 
 ## Features
 
-- **Two-phase generation**: _outline → subsections_ (+ optional per-section summary).
-- **Duplicate-aware outline** with merge + retry; status = `success|warning`.
-- **Context strategies**:
-  - `outline`: minimal context (fastest)
-  - `full`: includes previous sections
-  - `summary`: includes summaries of previous sections
-- **Strict Markdown** with `**bold**` emphasis; HTML is auto-converted via Turndown if it leaks.
-- **Image placeholders**: each subsection includes one `[image]an image description[/image]`.
-- **Exports**: any combination of `json`, `html`, `md`.
-- **Pricing & usage**: token usage and cost estimates, model-aware via `.env` (or `--price-in/out` overrides).
-- **Verbose mode**: final table with **per-section timing** and **total runtime**; optional usage/cost table.
+- **Two-phase article generation**: outline → subsections (+ optional per-section summaries)
+- **Duplicate-aware outline** with merge + retry (status: `success|warning`)
+- **Context strategies**: `outline` (fast) | `summary` (balanced) | `full` (max cohesion)
+- **Strict Markdown** (HTML stripped → Turndown fallback) with emphasized `**keywords**`
+- **Image placeholders**: `[image]an image description[/image]` per subheading slot
+- **Exports**: pick any subset of `json`, `html`, `md` (`--export all` for all)
+- **Pricing & usage**: token counts + model-aware cost (env hierarchy or CLI overrides)
+- **Verbose mode**: per-section timing table + totals, optional usage/cost table
+- **Topics**: ideation list with rationale, confidence, risk flags, filtering & scoring
+- **Automation**: domain topics → batch article generation with concurrency & timing
 
 ---
 
@@ -87,35 +88,56 @@ Build artifacts go to `dist/`.
 
 ---
 
-## CLI Usage
+## CLI Overview
 
-Development (tsx):
+Three executables (after build or via `npx` if linked):
 
+| Command | Purpose | Primary Flags |
+|---------|---------|---------------|
+| `ghostwriter-article` | Single article generation | `--topic --keywords --context --export --lang` |
+| `ghostwriter-topics` | Topic ideation & filtering | `--domain --limit --include/--exclude --lang` |
+| `ghostwriter-auto` | Topics → multi-article batch | Topic + article flags + `--count --concurrency` |
+
+Quick start (article):
 ```bash
-npx tsx ./src/generate-article.ts \
+npx ghostwriter-article \
   --model gpt-4o-mini \
   --topic "React 19: What Changes for Production Apps" \
   --keywords "react 19, transitions, actions, server components" \
-  --min 1200 \
-  --max 1800 \
-  --tags "react,frontend,release" \
-  --categories "technology,web" \
-  --style "actionable, authoritative, developer-friendly" \
-  --lang en \
-  --context summary \
-  --export all \
-  --out react-19-production \
-  --outdir ./result \
-  --verbose
+  --export all
 ```
 
-After build:
-
+Quick start (topics):
 ```bash
-node ./dist/src/generate-article.js [options...]
+npx ghostwriter-topics --domain "frontend performance" --limit 10 --include react,cache
 ```
 
-### Options
+Quick start (automation):
+```bash
+npx ghostwriter-auto \
+  --domain "web performance" \
+  --t-model gpt-4o-mini \
+  --a-model gpt-4o-mini \
+  --count -1 \
+  --concurrency 3 \
+  --export json
+```
+
+Development (tsx from source):
+```bash
+npx tsx src/article/cli.ts --topic "Edge Caching Strategies in 2025" --keywords "cdn,cache-control" --export md
+```
+
+Help:
+```bash
+ghostwriter-article --help
+ghostwriter-topics --help
+ghostwriter-auto --help
+```
+
+Below: detailed article CLI reference; topics & automation documented later.
+
+### Article CLI Options (`ghostwriter-article`)
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
@@ -129,7 +151,7 @@ node ./dist/src/generate-article.js [options...]
 | `--style` | string | `"helpful, concise, SEO-aware"` | Style/tone notes. |
 | `--lang` | string | `en` | Output language for text and image prompts. |
 | `--context` | `outline`\|`full`\|`summary` | `outline` | Cohesion strategy across sections. |
-| `--export` | `json`\|`html`\|`md`\|`both`\|`all` | `json` | Output format(s). |
+| `--export` | `json`\|`html`\|`md`\|`all` | `json` | Output format(s); `all` = json+html+md. |
 | `--out` | string | Derived from slug | Base filename (no extension). |
 | `--outdir` | string | `./result` | Output directory. |
 | (programmatic) `namePattern` | string | none | Pattern tokens: `[timestamp]`, `[date]`, `[time]`, `[slug]`, `[title]`. Overrides `--out`. |
@@ -183,8 +205,8 @@ Export modes:
 - `json` → structured article object (includes timings, usage, cost)
 - `html` → Minimal HTML document (Markdown converted)
 - `md` → Front-matter style Markdown
-- `both` → Convenience alias for `html` + `md`
 - `all` → `json` + `html` + `md`
+`both` removed (use comma list or `all`).
 
 Pricing resolution order (first match wins):
 1. CLI flags: `--price-in`, `--price-out`
@@ -228,11 +250,17 @@ result/
 
 ## Architecture
 
-The codebase is now modularized for clarity and testability:
+The codebase is modularized for clarity and testability:
 
 | Module | Purpose |
 |--------|---------|
-| `src/generate-article.ts` | Orchestrator + CLI entry (when run directly); coordinates outline, sections, summaries, assembly, export. |
+| `src/article/generate-article.ts` | Article orchestrator (outline → sections → summaries → assembly + export). |
+| `src/generate-article.ts` | Re-export convenience entry. |
+| `src/article/cli.ts` | Article CLI implementation. |
+| `src/topics/generate-topics.ts` | Topic ideation: scored list (title, rationale, confidence, riskFlags). |
+| `src/topics/cli.ts` | Topics CLI. |
+| `src/automation/auto-generate.ts` | Topics → multi-article concurrency orchestrator. |
+| `src/automation/cli.ts` | Automation CLI. |
 | `src/types.ts` | Shared type definitions (providers, strategies, article/result interfaces, timing structs). |
 | `src/prompts.ts` | All prompt construction helpers (outline / section / summary). Pure string builders. |
 | `src/model-config.ts` | Model→provider client resolution (OpenAI / Deepseek) |
@@ -242,6 +270,8 @@ The codebase is now modularized for clarity and testability:
 | `src/assembly.ts` | Article assembly + filename utilities + HTML/Markdown document builders + duration formatting. |
 | `src/utils.ts` | Cross-cutting utilities: Markdown sanitation, HTML→Markdown, token estimation, cost helpers. |
 | `tests/*.test.ts` | Lightweight assertion-based tests (no framework) for prompts, pricing, assembly. |
+| `src/topics/generate-topics.ts` | Topic ideation: returns scored list (title, rationale, confidence, riskFlags). |
+| `src/automation/auto-generate.ts` | High-level: topics → multi-article generation with concurrency + timings. |
 
 ### Data / Control Flow
 1. CLI parses args → resolves model + pricing.
@@ -361,6 +391,150 @@ Field reference summary:
 `article.status` is `warning` if collapsed duplicate ratio in outline > 20%, else `success`.
 
 ### Filename Patterns (programmatic API)
+Use `namePattern` to dynamically construct filenames. Tokens:
+
+| Token | Meaning |
+|-------|---------|
+| `[timestamp]` | Milliseconds at run start |
+| `[date]` | UTC date `YYYYMMDD` |
+| `[time]` | UTC time `HHmmss` |
+| `[slug]` | Article slug derived from title |
+| `[title]` | Slugified title (fallback) |
+
+Example:
+```ts
+await generateArticle({
+  ...opts,
+  namePattern: '[date]-[slug]',
+  exportModes: ['json','md']
+});
+```
+
+---
+## Topics CLI (`ghostwriter-topics`)
+
+Generate candidate ideas for a domain / niche:
+```bash
+ghostwriter-topics --domain "modern frontend" --limit 12 --include react,performance --exclude legacy
+```
+
+Key flags:
+- `--domain <string>` (required)
+- `--limit <n>` final topic target (internal over-generation)
+- Filtering: `--include`, `--exclude`, `--include-regex`, `--exclude-regex`
+- Language enforcement: `--lang`
+- Pricing: `--price-in`, `--price-out`
+- Usage table: `--usage` (force print)
+
+Per topic: `title`, `rationale`, `confidence`, `riskFlags[]` (e.g. `speculative`, `maybe-outdated`). Scoring heuristic ranks before selection.
+
+Filtering order: includeKeywords → excludeKeywords → includeRegex → excludeRegex. If all filtered out, reverts to unfiltered deduped list.
+
+---
+## Automation CLI (`ghostwriter-auto`)
+
+End-to-end batch: generate topics then multiple articles concurrently.
+```bash
+ghostwriter-auto \
+  --domain "web performance" \
+  --t-model gpt-4o-mini \
+  --a-model gpt-4o-mini \
+  --count 5 \
+  --concurrency 3 \
+  --export json
+```
+
+Important flags:
+- Topic phase: `--domain`, `--t-model`, `--t-limit`, filters, `--lang`
+- Article phase: `--a-model`, `--min`, `--max`, `--context`, `--export`, `--tags`, `--categories`, `--style`, `--name-pattern`
+- Automation: `--count <n|-1>` (`-1` or omit = all), `--concurrency <n>`
+
+Behavior:
+- Preserves topic order under concurrency
+- Per-article errors caught (verbose logs); failed slots left undefined
+- Timings: `topicsMs`, `articlesMs`, `totalMs` + boundaries
+
+Use for scheduled batches, editorial ideation → draft generation, or domain coverage.
+
+---
+## Programmatic APIs Summary
+Import paths:
+```ts
+import { generateArticle } from './src/article/generate-article.js';
+import { generateTopics } from './src/topics/generate-topics.js';
+import { autoGenerateArticlesFromTopics } from './src/automation/auto-generate.js';
+```
+
+---
+## Roadmap / Potential Enhancements
+- WordPress publishing helper (`publish-to-wp.ts`) for bulk post creation (expects JSON bundle with `items[]`).
+- Retry & backoff for subsection failures
+- Optional streamed / incremental exports
+- Additional formats (RSS item, sitemap fragment)
+- More granular quiet vs usage table controls
+- Pluggable scoring for topics
+- Post-generation validation hooks
+## Topics Generation
+
+Programmatic example:
+```ts
+import { generateTopics } from './src/topics/generate-topics.js';
+
+const result = await generateTopics({
+  domain: 'frontend engineering',
+  model: 'gpt-4o-mini',
+  limit: 12,
+  lang: 'en',             // optional: enforce language for titles & rationale
+  includeKeywords: ['react','performance'], // OR use includeRegex
+  excludeRegex: 'legacy|deprecated',
+  printUsage: true,
+  verbose: true,
+});
+
+console.log(result.topics[0]);
+```
+
+Returned fields per topic:
+- `title`
+- `rationale`
+- `confidence` (0–1)
+- `riskFlags` (array, may contain: `maybe-outdated`, `speculative`, `broad` — empty array when none)
+
+Filtering precedence (applied post-dedupe, pre-scoring):
+1. `includeKeywords` (OR match)
+2. `excludeKeywords`
+3. `includeRegex`
+4. `excludeRegex`
+
+If all filters eliminate results → fallback to unfiltered deduped list.
+
+Scoring heuristic: `(confidence || 0.55) - riskFlags.length * 0.05` descending.
+
+## Automation (Topics → Articles)
+
+```ts
+import { autoGenerateArticlesFromTopics } from './src/automation/auto-generate.js';
+
+const res = await autoGenerateArticlesFromTopics({
+  topics: { domain: 'web performance', model: 'gpt-4o-mini', limit: 12, lang: 'en' },
+  article: { model: 'gpt-4o-mini', exportModes: ['json'], contextStrategy: 'outline' },
+  // count: -1, // -1 or omitted = generate articles for ALL topics returned
+  concurrency: 4, // default 2 if omitted
+  verbose: true,
+  onArticle(a, i) { console.log('Article', i, a.title); }
+});
+
+console.log(res.timings); // { topicsMs, articlesMs, totalMs, ... }
+```
+
+Options summary:
+- `count`: number of top topics to convert; `-1` or `undefined` → all.
+- `concurrency`: max parallel article generations (default `2`).
+- Preserves topic order even under concurrency.
+- `timings` in result: `startTime`, `topicsEndTime`, `endTime`, `topicsMs`, `articlesMs`, `totalMs`.
+
+Error handling: per-article errors are caught and logged (when `verbose`); failed slots remain `undefined` in `articles` array (can be post-filtered).
+
 Use `namePattern` in `generateArticle` options for dynamic filenames:
 
 Tokens:

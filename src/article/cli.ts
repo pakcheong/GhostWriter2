@@ -1,14 +1,14 @@
 #!/usr/bin/env node
+// Moved from root src/cli.ts to align with article generation scope.
 import path from 'path';
 import { pathToFileURL } from 'url';
-import { generateArticle } from './generate-article.js';
-import { getArg } from './utils.js';
-import type { ContextStrategy, ExportMode } from './types.js';
+import { generateArticle } from '../article/generate-article.js';
+import { getArg } from '../utils.js';
+import type { ContextStrategy, ExportMode } from '../types.js';
 
 function parseExportModes(raw?: string): ExportMode[] {
   if (!raw) return ['json'];
   const lower = raw.toLowerCase().trim();
-  if (lower === 'both') return ['json', 'html'];
   if (lower === 'all') return ['json', 'html', 'md'];
   const parts = lower.split(',').map((s) => s.trim()).filter(Boolean);
   const allowed: ExportMode[] = [];
@@ -24,27 +24,29 @@ const isMain = import.meta.url === pathToFileURL(process.argv[1]).href;
 if (isMain) {
   (async () => {
     if (process.argv.includes('--help') || process.argv.includes('-h')) {
-      const help = 'ghostwriter article generator\n\n' +
+      const help = 'ghostwriter article generator (moved to src/article/cli.ts)\n\n' +
         'Usage: ghostwriter [options]\n\n' +
         'Options:\n' +
-        '  --model <model>                Model id (env fallback)\n' +
-        '  --topic <string>               Article topic\n' +
-        '  --keywords "a,b,c"            Comma list of keywords (required)\n' +
-        '  --min <num>                    Minimum word target (default 1000)\n' +
-        '  --max <num>                    Maximum word target (default 1400)\n' +
-        '  --tags "t1,t2"                Existing tags reference\n' +
-        '  --categories "c1,c2"          Existing categories reference\n' +
-        '  --style <notes>               Style notes\n' +
-        '  --lang <code>                 Language (default en)\n' +
+        '  --model <model>                  Model id (env fallback)\n' +
+        '  --topic <string>                 Article topic\n' +
+        '  --keywords "a,b,c"               Comma list of keywords (required)\n' +
+        '  --min <num>                      Minimum word target (default 1000)\n' +
+        '  --max <num>                      Maximum word target (default 1400)\n' +
+        '  --tags "t1,t2"                   Existing tags reference\n' +
+        '  --categories "c1,c2"             Existing categories reference\n' +
+        '  --style <notes>                  Style notes\n' +
+        '  --lang <code>                    Language (default en)\n' +
         '  --context <outline|full|summary> Context strategy (default outline)\n' +
-        '  --export <json,html,md|both|all> Export formats (default json)\n' +
-        '  --out <basename>              Output base filename override\n' +
-        '  --outdir <dir>                Output directory (default ./result)\n' +
-        '  --price-in <number>           Override input price per 1K tokens\n' +
-        '  --price-out <number>          Override output price per 1K tokens\n' +
-        '  --quiet                       Reduce log output\n' +
-        '  --verbose                     Force verbose output\n' +
-        '  --help                        Show this help\n';
+        '  --export <json,html,md|all>      Export formats (default json)\n' +
+        '  --out <basename>                 Output base filename override\n' +
+        '  --outdir <dir>                   Output directory (default ./result)\n' +
+        '  --name-pattern <pattern>         Dynamic name pattern ([timestamp],[date],[time],[slug],[title])\n' +
+        '  --timestamp <ms>                 Fixed run timestamp (number)\n' +
+        '  --price-in <number>              Override input price per 1K tokens\n' +
+        '  --price-out <number>             Override output price per 1K tokens\n' +
+        '  --quiet                          Reduce log output\n' +
+        '  --verbose                        Force verbose output\n' +
+        '  --help                           Show this help\n';
       console.log(help);
       process.exit(0);
     }
@@ -63,6 +65,9 @@ if (isMain) {
     const outDirArg = getArg('--outdir') || path.join(process.cwd(), 'result');
     const priceInArg = getArg('--price-in');
     const priceOutArg = getArg('--price-out');
+    const namePattern = getArg('--name-pattern');
+    const timestampRaw = getArg('--timestamp');
+    const singleRunTimestamp = timestampRaw ? parseInt(timestampRaw, 10) : undefined;
 
     const quietFlag = process.argv.includes('--quiet');
     const verboseFlag = process.argv.includes('--verbose');
@@ -89,6 +94,9 @@ if (isMain) {
       writeFiles: true,
       priceInPerK: priceInArg,
       priceOutPerK: priceOutArg,
+      // printUsage intentionally not exposed via separate flags to match GenerateArticleOptions exactly
+      singleRunTimestamp,
+      namePattern,
       verbose,
     });
   })().catch((err) => {

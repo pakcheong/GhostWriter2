@@ -1,4 +1,4 @@
-import { assembleArticle } from '../src/assembly.js';
+import { assembleArticle } from '../src/article/assembly.js';
 import { strict as assert } from 'assert';
 
 const article = assembleArticle({

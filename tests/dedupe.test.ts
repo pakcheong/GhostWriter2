@@ -1,5 +1,5 @@
 import assert from 'assert';
-import { dedupeOutline } from '../src/dedupe.js';
+import { dedupeOutline } from '../src/article/dedupe.js';
 import type { OutlineResult } from '../src/types.js';
 
 const input: OutlineResult = {

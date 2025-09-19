@@ -1,4 +1,4 @@
-import { buildOutlinePrompt, buildSectionPrompt, buildSummaryPrompt } from '../src/prompts.js';
+import { buildOutlinePrompt, buildSectionPrompt, buildSummaryPrompt } from '../src/article/prompts.js';
 import { strict as assert } from 'assert';
 
 const outline = buildOutlinePrompt({

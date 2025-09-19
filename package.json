@@ -20,7 +20,9 @@
     "sample": "npm run build && tsx test.ts"
   },
   "bin": {
-    "ghostwriter": "./dist/cli.js"
+    "ghostwriter-article": "./dist/article/cli.js",
+    "ghostwriter-topics": "./dist/topics/cli.js",
+    "ghostwriter-auto": "./dist/automation/cli.js"
   },
   "dependencies": {
     "@ai-sdk/openai": "^2.0.31",

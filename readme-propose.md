@@ -174,6 +174,25 @@ npx ghostwriter-article \
 ```bash
 npx ghostwriter-topics --domain "frontend performance" --limit 10 --include react,cache
 ```
+Programmatic (promise):
+```ts
+import { generateTopics } from './src/topics/generate-topics.js';
+const wrapped = await generateTopics({ domain: 'frontend engineering', limit: 8, model: 'gpt-4o-mini' });
+const { output: { content }, input } = wrapped;
+console.log('First topic for', input.domain, ':', content.topics[0].title);
+```
+Callback form (receives same wrapper shape):
+```ts
+await generateTopics({
+  domain: 'frontend engineering',
+  limit: 8,
+  model: 'gpt-4o-mini',
+  onTopics(wrapped) {
+    const { output: { content } } = wrapped;
+    console.log('[callback] topics count', content.topics.length);
+  }
+});
+```
 ### Automation (topics → articles)
 ```bash
 npx ghostwriter-auto \
@@ -444,18 +463,15 @@ article.diagnostics = {
 
 ---
 ## 26. Callback Refactor (Planned Breaking Change)
-Current:
+Current (implemented):
 ```ts
-onArticle(article: ArticleJSON)
+// Article generation callback
+onArticle(payload: GenerateArticleCallbackPayload) // { output: {content,runtime}, input }
+
+// Topics generation callback
+onTopics(payload: GenerateTopicsWrappedPayload) // { output: {content,runtime}, input }
 ```
-Planned:
-```ts
-onArticle({
-  inputMeta: { topic, keywords, wordCountRange, existingTags, existingCategories, lang, contextStrategy, model, exportModes },
-  result: ArticleJSON
-})
-```
-Transition: dual mode with env flag `LEGACY_CALLBACK=1` for one minor release.
+Future adjustments (if any) will follow SemVer; wrapper now canonical across features.
 
 ---
 ## 27. Example Section Generation (Sequence)

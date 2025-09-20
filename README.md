@@ -493,11 +493,11 @@ These are concrete next steps planned for the project:
 > (Implementation order may shift; contributions welcome.)
 ## Topics Generation
 
-Programmatic example:
+Programmatic example (promise result):
 ```ts
 import { generateTopics } from './src/topics/generate-topics.js';
 
-const result = await generateTopics({
+const topicsResult = await generateTopics({
   domain: 'frontend engineering',
   model: 'gpt-4o-mini',
   limit: 12,
@@ -507,11 +507,26 @@ const result = await generateTopics({
   printUsage: true,
   verbose: true,
 });
-
-console.log(result.topics[0]);
+// Unified wrapper shape (mirrors article generator):
+// topicsResult = { input, output: { content, runtime } }
+const { output: { content, runtime }, input } = topicsResult;
+console.log(content.topics[0]);
 ```
 
-Returned fields per topic:
+Using the `onTopics` callback (receives the same wrapper object):
+```ts
+await generateTopics({
+  domain: 'frontend engineering',
+  limit: 8,
+  model: 'gpt-4o-mini',
+  onTopics(wrapped) {
+    const { output: { content }, input } = wrapped;
+    console.log('Callback topics for domain', input.domain, 'count=', content.topics.length);
+  }
+});
+```
+
+Returned fields per topic (content.topics[i]):
 - `title`
 - `rationale`
 - `confidence` (0–1)
@@ -526,6 +541,22 @@ Filtering precedence (applied post-dedupe, pre-scoring):
 If all filters eliminate results → fallback to unfiltered deduped list.
 
 Scoring heuristic: `(confidence || 0.55) - riskFlags.length * 0.05` descending.
+
+### Unified Wrapper Structure
+
+`generateArticle` and `generateTopics` both return a wrapper object:
+
+```ts
+{
+  input: { /* echoed request options + resolved model */ },
+  output: {
+    content: { /* pure semantic data (article or topics list) */ },
+    runtime: { /* timings, usage, pricing, counts, strategy */ }
+  }
+}
+```
+
+Access canonical data via `output.content` & diagnostics via `output.runtime`. The same wrapper is passed to `onTopics` (topics) and a richer callback payload is passed to `onArticle` (articles) containing content + runtime + echoed input.
 
 ## Automation (Topics → Articles)
 

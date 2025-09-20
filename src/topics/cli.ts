@@ -90,12 +90,14 @@ if (isMain) {
     });
 
     if (!verbose) {
-      // Minimal output: list selected + topics
+      const {
+        output: { content }
+      } = res as any;
       console.log('\nSelected Topic:');
-      if (res.selectedIndex >= 0) console.log(' * ' + res.topics[res.selectedIndex].title);
+      if (content.selectedIndex >= 0) console.log(' * ' + content.topics[content.selectedIndex].title);
       else console.log(' (none)');
       console.log('\nTopics:');
-      res.topics.forEach((t, i) => console.log(`${i + 1}. ${t.title}`));
+      content.topics.forEach((t: any, i: number) => console.log(`${i + 1}. ${t.title}`));
     }
   })().catch((err) => {
     console.error(err?.message || err);

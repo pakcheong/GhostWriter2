@@ -70,7 +70,7 @@ export function installGhostwriterMocks(options: { topicsCount?: number; provide
         // Simulate provider (deepseek / lmstudio) chat completion
         const body = init?.body ? safeJsonParse(init.body) : {};
         const messages: any[] = body?.messages || [];
-  const first = messages[messages.length - 1]?.content || '';
+        const first = messages[messages.length - 1]?.content || '';
         let content: string;
         if (/outline/i.test(first) || /title/i.test(first) || /STRICT JSON/i.test(first)) {
           content = JSON.stringify({

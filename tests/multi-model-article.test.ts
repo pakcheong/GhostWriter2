@@ -20,7 +20,7 @@ try {
       }
     });
     assert.ok(article.title.length > 0);
-  assert.ok(captured.output?.runtime?.model?.provider);
+    assert.ok(captured.output?.runtime?.model?.provider);
   }
   console.log('multi-model-article.test.ts passed');
 } finally {

@@ -1,15 +1,20 @@
 // Topic (trending) generation skeleton. No real external API yet.
 import { resolveProviderForModel, safeGenerateText } from '../llm.js';
 import { getClientForProvider } from '../model-config.js';
-import type { Usage } from '../utils.js';
-import type { GenerateTopicsOptions, GenerateTopicsResult, TopicCandidate } from './types.js';
+import type {
+  GenerateTopicsOptions,
+  TopicCandidate,
+  GenerateTopicsWrappedPayload,
+  TopicsContent,
+  TopicsRuntime
+} from './types.js';
 
 import { extractUsage } from '../usage.js';
 import { resolvePrices } from '../pricing.js';
 import { emptyUsage, addUsage, costEstimate, formatUSD } from '../utils.js';
 import Table from 'cli-table3';
 
-export async function generateTopics(options: GenerateTopicsOptions): Promise<GenerateTopicsResult> {
+export async function generateTopics(options: GenerateTopicsOptions): Promise<GenerateTopicsWrappedPayload> {
   const { domain, model = process.env.OPENAI_MODEL || 'gpt-4o-mini', limit = 8, verbose, lang } = options;
   const { priceInPerK, priceOutPerK, printUsage: printUsageOpt, onTopics } = options;
   const { includeKeywords, excludeKeywords, includeRegex, excludeRegex } = options;
@@ -140,25 +145,21 @@ export async function generateTopics(options: GenerateTopicsOptions): Promise<Ge
   const totalCost = pricing.found ? costEstimate(totalUsage, priceIn, priceOut) : undefined;
 
   const endTime = Date.now();
-  const result: GenerateTopicsResult = {
-    domain,
-    mode: 'llm-only',
-    topics: final,
-    selectedIndex: final.length ? 0 : -1,
-    usage: { generation: usageGeneration, total: totalUsage },
-    cost: pricing.found
-      ? { generation: costGeneration, total: totalCost, priceInPerK: pricing.in, priceOutPerK: pricing.out }
-      : undefined,
-    timings: { startTime, endTime, totalMs: endTime - startTime, generationMs }
-  };
+  const selectedIndex = final.length ? 0 : -1;
+  const usage = { generation: usageGeneration, total: totalUsage };
+  const cost = pricing.found
+    ? { generation: costGeneration, total: totalCost, priceInPerK: pricing.in, priceOutPerK: pricing.out }
+    : undefined;
+  const timings = { startTime, endTime, totalMs: endTime - startTime, generationMs };
 
-  const printUsage = typeof printUsageOpt === 'boolean' ? printUsageOpt : verbose;
-  if (printUsage) {
+  if (printUsageOpt) {
     console.log('\n=== Topics Usage & Cost ===');
     console.log(`Provider (mapped): ${provider}  Model: ${model}`);
     if (pricing.found)
       console.log(
-        `Pricing (per 1K tokens): input=${priceIn != null ? `$${priceIn}` : 'n/a'}  output=${priceOut != null ? `$${priceOut}` : 'n/a'} (source: ${pricing.source})`
+        `Pricing (per 1K tokens): input=${priceIn != null ? `$${priceIn}` : 'n/a'}  output=${
+          priceOut != null ? `$${priceOut}` : 'n/a'
+        } (source: ${pricing.source})`
       );
     else console.log('Pricing (per 1K tokens): n/a');
     const table = new Table({
@@ -183,7 +184,6 @@ export async function generateTopics(options: GenerateTopicsOptions): Promise<Ge
     ]);
     console.log(table.toString());
 
-    // Topics list table (selected first) with extended metadata
     const topicsTable = new Table({
       head: ['#', 'Topic', 'Confidence', 'RiskFlags', 'Rationale'],
       colWidths: [4, 50, 11, 18, 55],
@@ -191,14 +191,12 @@ export async function generateTopics(options: GenerateTopicsOptions): Promise<Ge
       wordWrap: true
     });
     const ordered = [...final];
-    // Move selected to front if not already
-    const selIdx = result.selectedIndex;
-    if (selIdx > 0 && selIdx < ordered.length) {
-      const [sel] = ordered.splice(selIdx, 1);
+    if (selectedIndex > 0 && selectedIndex < ordered.length) {
+      const [sel] = ordered.splice(selectedIndex, 1);
       ordered.unshift(sel);
     }
     ordered.forEach((t, idx) => {
-      const label = idx === 0 && result.selectedIndex !== -1 ? '*1' : String(idx + 1);
+      const label = idx === 0 && selectedIndex !== -1 ? '*1' : String(idx + 1);
       const conf = typeof t.confidence === 'number' ? t.confidence.toFixed(2) : '';
       const risks = t.riskFlags && t.riskFlags.length ? t.riskFlags.join(',') : '—';
       const rationale = t.rationale ? t.rationale.slice(0, 240) : '';
@@ -209,14 +207,29 @@ export async function generateTopics(options: GenerateTopicsOptions): Promise<Ge
     console.log(topicsTable.toString());
   }
 
+  const content: TopicsContent = { domain, topics: final, selectedIndex };
+  const runtime: TopicsRuntime = {
+    model: { requested: options.model, resolved: model, provider },
+    usage,
+    cost,
+    timings,
+    limitRequested: limit,
+    limitEffective: final.length,
+    filteringApplied: !!(includeKeywords?.length || excludeKeywords?.length || includeRegex || excludeRegex)
+  };
+  const wrapped: GenerateTopicsWrappedPayload = {
+    output: { content, runtime },
+    input: { ...options, modelResolved: model }
+  };
+
   if (typeof onTopics === 'function') {
     try {
-      await onTopics(result);
+      await onTopics(wrapped);
     } catch (err) {
       if (verbose) console.warn('[onTopics] callback error:', err);
     }
   }
-  return result;
+  return wrapped;
 }
 
 // Test hook (mirrors pattern in article generator)

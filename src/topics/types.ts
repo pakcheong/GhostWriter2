@@ -20,8 +20,8 @@ export interface GenerateTopicsOptions {
   priceOutPerK?: string | number;
   /** Print token usage/cost table to console */
   printUsage?: boolean;
-  /** Callback invoked with final topics result */
-  onTopics?: (result: GenerateTopicsResult) => void | Promise<void>;
+  /** Callback invoked with final topics wrapper (content + runtime + echoed input) */
+  onTopics?: (result: GenerateTopicsWrappedPayload) => void | Promise<void>;
   /** Only keep topics containing at least one of these keywords */
   includeKeywords?: string[];
   /** Discard topics containing any of these keywords */
@@ -79,4 +79,28 @@ export interface GenerateTopicsResult {
     totalMs: number;
     generationMs: number;
   };
+}
+
+/** Content portion of topics generation (pure semantic list) */
+export interface TopicsContent {
+  domain: string;
+  topics: TopicCandidate[];
+  selectedIndex: number;
+}
+
+/** Runtime stats for topics generation (usage, timing, pricing) */
+export interface TopicsRuntime {
+  model: { requested?: string; resolved: string; provider: 'openai' | 'deepseek' | 'lmstudio' };
+  usage: GenerateTopicsResult['usage'];
+  cost?: GenerateTopicsResult['cost'];
+  timings: GenerateTopicsResult['timings'];
+  limitRequested: number;
+  limitEffective: number;
+  filteringApplied: boolean;
+}
+
+/** Wrapper payload aligning topics with article generator output shape */
+export interface GenerateTopicsWrappedPayload {
+  output: { content: TopicsContent; runtime: TopicsRuntime };
+  input: GenerateTopicsOptions & { modelResolved: string };
 }

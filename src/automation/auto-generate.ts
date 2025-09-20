@@ -16,19 +16,19 @@ export async function autoGenerateArticlesFromTopics(
   // Determine a provisional topic generation limit. If count is unknown/all, keep user provided limit or fallback to 10.
   const topicLimit =
     options.topics.limit ?? (typeof rawCount === 'number' && rawCount > 0 ? Math.max(rawCount * 2, 6) : 10);
-  const topicsResult = await generateTopics({
+  const topicsWrapped = await generateTopics({
     ...options.topics,
     limit: topicLimit,
     verbose: options.topics.verbose ?? verbose
   });
   const topicsEndTime = Date.now();
-  const topicTitles = topicsResult.topics.map((t) => t.title);
+  const topicTitles = topicsWrapped.output.content.topics.map((t: any) => t.title);
   const desiredCount =
     rawCount == null || rawCount === -1 ? topicTitles.length : Math.min(rawCount, topicTitles.length);
   const picked = topicTitles.slice(0, desiredCount);
   if (options.onTopicsResult) {
     try {
-      await options.onTopicsResult({ topics: topicTitles, raw: topicsResult });
+      await options.onTopicsResult({ topics: topicTitles, raw: topicsWrapped });
     } catch (err) {
       if (verbose) console.warn('[automation] onTopicsResult error', err);
     }

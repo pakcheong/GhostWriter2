@@ -36,7 +36,8 @@ export interface AutoGenerateOptions {
 
   /**
    * Per-article callback. index is 0-based.
-   * Receives internal ArticleJSON (legacy shape); wrap manually if you need the new runtime wrapper.
+   * Receives the internal flat ArticleJSON (core article fields). If you need runtime diagnostics,
+   * use the wrapper returned by generateArticle directly in other code paths.
    */
   onArticle?: (article: ArticleJSON, index: number) => void | Promise<void>;
 

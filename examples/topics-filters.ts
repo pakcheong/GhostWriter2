@@ -1,7 +1,7 @@
 import { generateTopics } from '../dist/index.js';
 
 (async () => {
-  const res = await generateTopics({
+  const wrapped = await generateTopics({
     domain: 'frontend performance',
     model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
     includeKeywords: ['react', 'cache'],
@@ -10,5 +10,8 @@ import { generateTopics } from '../dist/index.js';
     verbose: true,
     printUsage: true
   });
-  console.log('[sample] filtered topics count:', res.topics.length);
+  const {
+    output: { content }
+  } = wrapped as any;
+  console.log('[sample] filtered topics count:', content.topics.length);
 })();

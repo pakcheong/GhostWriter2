@@ -60,6 +60,8 @@ async function generateOutlineInternal(opts: {
   existingCategories: string[];
   lang: string;
   verbose: boolean;
+  requiredHeadings?: string[];
+  requiredSubheadings?: string[];
 }): Promise<{ outline: OutlineResult; usage: Usage; modelId: string; ms: number }> {
   const provider = resolveProviderForModel(opts.model);
   const { openai } = getClientForProvider(provider, { verbose: opts.verbose });
@@ -69,7 +71,9 @@ async function generateOutlineInternal(opts: {
     wordCountRange: opts.wordCountRange,
     existingTags: opts.existingTags,
     existingCategories: opts.existingCategories,
-    lang: opts.lang
+    lang: opts.lang,
+    requiredHeadings: opts.requiredHeadings,
+    requiredSubheadings: opts.requiredSubheadings
   });
   const t0 = Date.now();
   const res = await safeGenerateText(
@@ -95,6 +99,12 @@ async function generateSubsectionMarkdownInternal(opts: {
   previousSections: string[];
   previousSummaries: string[];
   verbose: boolean;
+  requiredCoveragePhrases?: string[];
+  normalizedRequiredContent?: Array<{
+    text: string;
+    intent: 'heading' | 'subheading' | 'mention' | 'section';
+    minMentions: number;
+  }>;
 }): Promise<{ text: string; usage: Usage; modelId: string; ms: number }> {
   const provider = resolveProviderForModel(opts.model);
   const { openai } = getClientForProvider(provider, { verbose: opts.verbose });
@@ -136,7 +146,24 @@ async function generateSubsectionMarkdownInternal(opts: {
       styleNotes: opts.styleNotes,
       section,
       subheading: opts.subheading,
-      lang: opts.lang
+      lang: opts.lang,
+      requiredCoveragePhrases: opts.requiredCoveragePhrases,
+      pendingRequiredMentions: (() => {
+        if (!opts.normalizedRequiredContent) return undefined;
+        const mentionItems = opts.normalizedRequiredContent.filter(
+          (i) => i.intent === 'mention' || i.intent === 'section'
+        );
+        if (!mentionItems.length) return undefined;
+        const bodySoFar = opts.previousSections.join('\n\n').toLowerCase();
+        const pending = mentionItems
+          .filter((m) => {
+            const safe = m.text.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const count = (bodySoFar.match(new RegExp(safe, 'g')) || []).length;
+            return count < m.minMentions;
+          })
+          .map((m) => ({ text: m.text, minMentions: m.minMentions }));
+        return pending.length ? pending : undefined;
+      })()
     })
   });
   const joinedPrompt = contextMessages.map((m) => m.content).join('\n\n');
@@ -188,12 +215,17 @@ export async function generateArticle(
     exportModes = ['json'],
     outBaseName,
     outputDir = path.join(process.cwd(), '.tmp'),
+    requiredOutlineHeadings: rawRequiredOutlineHeadings = [],
+    requiredOutlineSubheadings: rawRequiredOutlineSubheadings = [],
+    requiredCoveragePhrases: rawRequiredCoveragePhrases = [],
+    requiredContent = [],
     singleRunTimestamp,
     writeFiles = true,
     verbose = false,
     printPreview: _ignoredPreview,
     printUsage: printUsageOpt,
-    namePattern
+    namePattern,
+    strictRequired
   } = options;
   if (!Array.isArray(keywords) || keywords.length === 0)
     throw new Error('keywords must be a non-empty string array.');
@@ -202,6 +234,63 @@ export async function generateArticle(
   const model = modelInput || envModel || 'gpt-4o-mini';
   const provider = resolveProviderForModel(model);
   const totalStart = Date.now();
+
+  // --- Normalize & merge requiredContent into unified required arrays ---
+  // We build finalRequired* arrays used for enforcement & coverage while preserving the
+  // originally provided raw lists for echo if needed. requiredContent items with intent:
+  //  - heading   -> outline heading requirement
+  //  - subheading-> outline subheading requirement
+  //  - mention   -> body coverage phrase requirement (minMentions supported)
+  //  - section   -> currently treated like 'mention' for coverage; future: full section injection
+  // Items without explicit intent default to 'mention'.
+  const finalRequiredOutlineHeadings = [...rawRequiredOutlineHeadings];
+  const finalRequiredOutlineSubheadings = [...rawRequiredOutlineSubheadings];
+  const finalRequiredCoveragePhrases = [...rawRequiredCoveragePhrases];
+  interface NormalizedRequiredContentItem {
+    id?: string;
+    text: string;
+    intent: 'heading' | 'subheading' | 'mention' | 'section';
+    minMentions: number;
+    optional?: boolean;
+    matchMode?: 'substring' | 'regex' | 'loose';
+    injectStrategy?: 'append-paragraph' | 'append-section' | 'none';
+    notes?: string;
+    maxMentions?: number;
+  }
+  const normalizedRequiredContent: NormalizedRequiredContentItem[] = [];
+  if (Array.isArray(requiredContent)) {
+    for (const item of requiredContent) {
+      if (!item || typeof item.text !== 'string') continue;
+      const text = item.text.trim();
+      if (!text) continue;
+      const intent = (item.intent || 'mention') as NormalizedRequiredContentItem['intent'];
+      const minMentions = item.minMentions && item.minMentions > 0 ? Math.floor(item.minMentions) : 1;
+      const maxMentions = item.maxMentions && item.maxMentions > 0 ? Math.floor(item.maxMentions) : undefined;
+      const norm: NormalizedRequiredContentItem = {
+        id: item.id,
+        text,
+        intent,
+        minMentions,
+        optional: item.optional,
+        matchMode: item.matchMode || 'substring',
+        injectStrategy: item.injectStrategy || 'none',
+        notes: item.notes,
+        maxMentions
+      };
+      normalizedRequiredContent.push(norm);
+      if (intent === 'heading') {
+        if (!finalRequiredOutlineHeadings.some((h) => h.toLowerCase() === text.toLowerCase()))
+          finalRequiredOutlineHeadings.push(text);
+      } else if (intent === 'subheading') {
+        if (!finalRequiredOutlineSubheadings.some((h) => h.toLowerCase() === text.toLowerCase()))
+          finalRequiredOutlineSubheadings.push(text);
+      } else {
+        if (!finalRequiredCoveragePhrases.some((h) => h.toLowerCase() === text.toLowerCase()))
+          finalRequiredCoveragePhrases.push(text);
+      }
+    }
+  }
+
   let outlineUsage: Usage = emptyUsage();
   let sectionsUsage: Usage = emptyUsage();
   let summaryUsage: Usage = emptyUsage();
@@ -222,9 +311,40 @@ export async function generateArticle(
       existingTags: existingTags.map((s) => s.toLowerCase()),
       existingCategories: existingCategories.map((s) => s.toLowerCase()),
       lang,
-      verbose
+      verbose,
+      requiredHeadings: finalRequiredOutlineHeadings,
+      requiredSubheadings: finalRequiredOutlineSubheadings
     });
     const deduped = dedupeOutline(raw, { verbose });
+    // Enforce required outline headings/subheadings if missing
+    if (finalRequiredOutlineHeadings.length) {
+      const existing = new Set(deduped.outline.map((s) => s.heading.toLowerCase()));
+      for (const h of finalRequiredOutlineHeadings) {
+        if (!existing.has(h.toLowerCase())) {
+          deduped.outline.push({ heading: h, subheadings: [] });
+          existing.add(h.toLowerCase());
+          if (verbose) console.log(`[outline] injected required heading: ${h}`);
+        }
+      }
+    }
+    if (finalRequiredOutlineSubheadings.length) {
+      // Attach subheadings to the last required heading if present, else last section
+      let target = deduped.outline[deduped.outline.length - 1];
+      for (const h of finalRequiredOutlineHeadings) {
+        const found = deduped.outline.find((s) => s.heading.toLowerCase() === h.toLowerCase());
+        if (found) target = found;
+      }
+      const existingSubs = new Set<string>(
+        deduped.outline.flatMap((s) => s.subheadings.map((sh) => sh.toLowerCase()))
+      );
+      for (const sh of finalRequiredOutlineSubheadings) {
+        if (!existingSubs.has(sh.toLowerCase())) {
+          target.subheadings.push(sh);
+          existingSubs.add(sh.toLowerCase());
+          if (verbose) console.log(`[outline] injected required subheading: ${sh}`);
+        }
+      }
+    }
     duplicateRatio = computeDuplicateRatio(raw, deduped);
     outline = deduped;
     outlineMs = Date.now() - outlineStart;
@@ -262,7 +382,9 @@ export async function generateArticle(
         contextStrategy,
         previousSections: sectionBlocks,
         previousSummaries: sectionSummaries,
-        verbose
+        verbose,
+        requiredCoveragePhrases: finalRequiredCoveragePhrases,
+        normalizedRequiredContent
       });
       const subMs = Date.now() - subStart;
       const cleaned = text
@@ -418,9 +540,97 @@ export async function generateArticle(
       total: totalUsage
     },
     cost: costs
-  } as ArticleJSON; // kept internally for backward compatibility
+  } as ArticleJSON;
   // Build callback/input/meta wrapper
   const sectionsMs = sectionTimings.reduce((acc, s) => acc + s.ms, 0);
+  // Coverage tracking across entire body (enhanced) for merged coverage phrases + requiredContent mentions
+  const bodyFull = sectionBlocks.join('\n\n');
+  const bodyLower = bodyFull.toLowerCase();
+  type CoverageItem = {
+    text: string;
+    intent: 'mention' | 'section';
+    requiredMentions: number;
+    foundMentions: number;
+    fulfilled: boolean;
+    optional?: boolean;
+    id?: string;
+    minMentions?: number;
+    maxMentions?: number;
+    overused?: boolean;
+    densityPerK?: number;
+  };
+  const coverageItems: CoverageItem[] = [];
+  // Build a lookup for normalized content items that map to mention/section
+  const mentionLike = normalizedRequiredContent.filter(
+    (i) => i.intent === 'mention' || i.intent === 'section'
+  );
+  // Start with legacy phrases (raw + requiredContent mapped) ensuring uniqueness (case-insensitive)
+  const seenPhrase = new Set<string>();
+  const mergedCoverageSources = finalRequiredCoveragePhrases.filter(Boolean);
+  for (const phrase of mergedCoverageSources) {
+    const key = phrase.toLowerCase();
+    if (seenPhrase.has(key)) continue;
+    seenPhrase.add(key);
+    const meta = mentionLike.find((m) => m.text.toLowerCase() === key);
+    let foundMentions = 0;
+    // Tokenize by word boundaries for safer counting if not regex
+    if (meta?.matchMode === 'regex') {
+      try {
+        const rx = new RegExp(meta.text, 'gi');
+        foundMentions = (bodyFull.match(rx) || []).length;
+      } catch {
+        foundMentions = bodyLower.includes(key) ? 1 : 0;
+      }
+    } else if (meta?.matchMode === 'loose') {
+      const normBody = bodyLower.replace(/\s+/g, ' ');
+      const target = key.replace(/\s+/g, ' ');
+      let idx = normBody.indexOf(target);
+      while (idx !== -1) {
+        foundMentions++;
+        idx = normBody.indexOf(target, idx + target.length);
+      }
+    } else {
+      // Build word boundary regex for multi-word or single word (fallback to simple substring if fails)
+      try {
+        const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const rx = new RegExp(`\\b${escaped}\\b`, 'gi');
+        foundMentions = (bodyFull.match(rx) || []).length;
+      } catch {
+        let idx = bodyLower.indexOf(key);
+        while (idx !== -1) {
+          foundMentions++;
+          idx = bodyLower.indexOf(key, idx + key.length);
+        }
+      }
+    }
+    const requiredMentions = meta ? meta.minMentions : 1;
+    const maxMentions =
+      (meta as any)?.maxMentions && (meta as any).maxMentions > 0 ? (meta as any).maxMentions : undefined;
+    coverageItems.push({
+      text: phrase,
+      intent: meta?.intent === 'section' ? 'section' : 'mention',
+      requiredMentions,
+      foundMentions,
+      fulfilled: foundMentions >= requiredMentions,
+      optional: meta?.optional,
+      id: meta?.id,
+      minMentions: meta?.minMentions,
+      maxMentions
+    });
+  }
+  // Compute density & overuse heuristics (simple heuristic: > maxMentions OR > (minMentions*8) & > 12 occurrences)
+  const totalBodyTokensApprox = bodyFull.split(/\s+/).length;
+  for (const item of coverageItems) {
+    item.densityPerK = totalBodyTokensApprox
+      ? (item.foundMentions / totalBodyTokensApprox) * 1000
+      : undefined;
+    const heuristicOver = item.foundMentions > (item.minMentions || 1) * 8 && item.foundMentions > 12;
+    if (item.maxMentions && item.foundMentions > item.maxMentions) item.overused = true;
+    else if (!item.maxMentions && heuristicOver) item.overused = true;
+  }
+  const overused = coverageItems.filter((c) => c.overused).map((c) => c.text);
+  const fulfilledCoverage = coverageItems.filter((c) => c.fulfilled).map((c) => c.text);
+  const missingCoverage = coverageItems.filter((c) => !c.fulfilled && !c.optional).map((c) => c.text);
   const inputPayload = {
     topic,
     keywords,
@@ -439,7 +649,14 @@ export async function generateArticle(
     namePattern,
     outBaseName,
     writeFiles,
-    verbose: verbose || undefined
+    verbose: verbose || undefined,
+    requiredOutlineHeadings: rawRequiredOutlineHeadings.length ? rawRequiredOutlineHeadings : undefined,
+    requiredOutlineSubheadings: rawRequiredOutlineSubheadings.length
+      ? rawRequiredOutlineSubheadings
+      : undefined,
+    requiredCoveragePhrases: rawRequiredCoveragePhrases.length ? rawRequiredCoveragePhrases : undefined,
+    requiredContent: requiredContent && requiredContent.length ? requiredContent : undefined,
+    strictRequired: strictRequired || undefined
   };
   // Build merged content + runtime
   const content: ArticleContent = {
@@ -490,7 +707,20 @@ export async function generateArticle(
         }
       : undefined,
     warning: status === 'warning'
+    // Embed coverage requirement tracking
+    // (kept inside runtime.strategy for minimal surface change elsewhere)
   };
+  if (coverageItems.length) {
+    const strictFailed = !!(strictRequired && (missingCoverage.length > 0 || overused.length > 0));
+    runtime.strategy.requiredCoverage = {
+      required: coverageItems.map((c) => c.text),
+      fulfilled: fulfilledCoverage,
+      missing: missingCoverage,
+      overused: overused.length ? overused : undefined,
+      strictFailed: strictFailed || undefined,
+      items: coverageItems
+    };
+  }
   const wrappedPayload: GenerateArticleCallbackPayload = {
     output: { content, runtime },
     input: inputPayload

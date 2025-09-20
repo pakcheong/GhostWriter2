@@ -2,6 +2,9 @@ import { generateTopics } from '../topics/generate-topics.js';
 import { generateArticle } from '../article/generate-article.js';
 import type { AutoGenerateOptions, AutoGenerateResult } from './types.js';
 import type { ArticleJSON } from '../types.js';
+import { mergeRequiredContentLists } from './merge-required-content.js';
+// TODO(doc): Document new automation hooks: baseRequiredContent, requiredContentFactory, aggregateCoverage
+import type { RequiredContentItem } from '../article/types.js';
 
 /**
  * High-level automation: generate topics then generate articles for the top N.
@@ -34,6 +37,12 @@ export async function autoGenerateArticlesFromTopics(
     }
   }
   const articles: ArticleJSON[] = new Array(picked.length);
+  const coveragePerArticle: Array<{
+    title: string;
+    baseName?: string;
+    missing: string[];
+    overused?: string[];
+  }> = [];
   const concurrency = Math.max(1, options.concurrency ?? 2);
   if (verbose)
     console.log(`[automation] starting article generation count=${picked.length} concurrency=${concurrency}`);
@@ -45,15 +54,60 @@ export async function autoGenerateArticlesFromTopics(
       const title = picked[i];
       if (verbose) console.log(`[automation] worker generating index=${i + 1} title="${title}"`);
       try {
+        // Build merged requiredContent for this topic (no legacy arrays externally)
+        let perTopicFactory: RequiredContentItem[] = [];
+        if (options.requiredContentFactory) {
+          try {
+            perTopicFactory =
+              (await options.requiredContentFactory(title, { index: i, topics: picked })) || [];
+          } catch (err) {
+            if (verbose) console.warn('[automation] requiredContentFactory error', err);
+          }
+        }
+        const mergedRequired = mergeRequiredContentLists([
+          options.baseRequiredContent,
+          perTopicFactory,
+          (options.article as any).requiredContent
+        ]);
+        // Derive structural arrays purely from merged list
+        const outlineHeadings = mergedRequired.filter((r) => r.intent === 'heading').map((r) => r.text);
+        const outlineSubheadings = mergedRequired.filter((r) => r.intent === 'subheading').map((r) => r.text);
+        const coveragePhrases = mergedRequired
+          .filter((r) => r.intent === 'mention' || r.intent === 'section')
+          .map((r) => r.text);
+        if (verbose) {
+          const mentions = mergedRequired.filter((r) => r.intent === 'mention').length;
+          const sections = mergedRequired.filter((r) => r.intent === 'section').length;
+          const withMax = mergedRequired.filter((r) => r.maxMentions).length;
+          console.log(
+            `[automation] requiredContent index=${i + 1} headings=${outlineHeadings.length} subheadings=${outlineSubheadings.length} mentions=${mentions} sections=${sections} maxTagged=${withMax}`
+          );
+        }
         const { article } = await generateArticle({
           ...(options.article as any),
+          // ensure we override any legacy arrays with derived ones
+          requiredContent: mergedRequired,
+          requiredOutlineHeadings: outlineHeadings,
+          requiredOutlineSubheadings: outlineSubheadings,
+          requiredCoveragePhrases: coveragePhrases,
           topic: title,
           keywords:
             options.article.keywords && options.article.keywords.length
               ? options.article.keywords
               : title.split(/\s+/).slice(0, 5),
           onArticle: async (payload) => {
-            const articleObj = (payload as any).output || payload; // forward/back compat
+            const wrapped = payload as any;
+            const articleObj = wrapped.output || payload; // forward/back compat
+            // Capture coverage summary if requested
+            if (options.aggregateCoverage && wrapped.output?.runtime?.strategy?.requiredCoverage) {
+              const rc = wrapped.output.runtime.strategy.requiredCoverage;
+              coveragePerArticle[i] = {
+                title: articleObj.content?.title || title,
+                baseName: wrapped.output.runtime.baseName,
+                missing: rc.missing,
+                overused: rc.overused
+              };
+            }
             if (options.article.onArticle) {
               try {
                 await (options.article as any).onArticle(payload);
@@ -95,9 +149,34 @@ export async function autoGenerateArticlesFromTopics(
     console.log(`  Articles     : ${fmt(articlesMs)} (concurrency=${concurrency})`);
     console.log(`  Total        : ${fmt(totalMs)}`);
   }
+  let coverageSummary: AutoGenerateResult['coverageSummary'] | undefined;
+  if (options.aggregateCoverage) {
+    // Build aggregate stats
+    const requiredSet = new Set<string>();
+    const missingCounts: Record<string, number> = {};
+    const overusedCounts: Record<string, number> = {};
+    for (const row of coveragePerArticle) {
+      if (!row) continue;
+      for (const m of row.missing || []) {
+        missingCounts[m] = (missingCounts[m] || 0) + 1;
+        requiredSet.add(m);
+      }
+      for (const o of row.overused || []) {
+        overusedCounts[o] = (overusedCounts[o] || 0) + 1;
+        requiredSet.add(o);
+      }
+    }
+    coverageSummary = {
+      required: Array.from(requiredSet.values()).sort(),
+      missing: missingCounts,
+      overused: overusedCounts,
+      articles: coveragePerArticle.filter(Boolean)
+    };
+  }
   return {
     topics: topicTitles,
     articles,
+    coverageSummary,
     timings: { startTime, topicsEndTime, endTime, totalMs, topicsMs, articlesMs }
   };
 }

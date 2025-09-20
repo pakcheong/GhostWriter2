@@ -26,6 +26,10 @@ TypeScript + Vercel AI SDK toolchain for generating SEO-ready content (articles,
 - **Verbose mode**: per-section timing table + totals, optional usage/cost table
 - **Topics**: ideation list with rationale, confidence, risk flags, filtering & scoring
 - **Automation**: domain topics → batch article generation with concurrency & timing
+- **Required Content Controls**: force headings/subheadings/phrases or use semantic `requiredContent[]` descriptors (intent + minMentions + optional)
+- **Semantic Required Factories**: automation layer can now merge `baseRequiredContent` + per-topic `requiredContentFactory()` + static article list; derives headings/subheadings/coverage phrases automatically.
+- **Strict & Overuse Protections**: `strictRequired` fails run (CLI exit code / programmatic flag) if required phrases missing or overused (heuristic or explicit `maxMentions`).
+- **Aggregate Coverage**: automation `aggregateCoverage` summarizes missing / overused counts across batch.
 
 ---
 
@@ -158,6 +162,10 @@ Below: detailed article CLI reference; topics & automation documented later.
 | `--price-in` | number | from `.env` | Override input token price. |
 | `--price-out` | number | from `.env` | Override output token price. |
 | `--verbose` | flag | on (unless --quiet) | Prints per-section timing + usage/cost tables. |
+| `--required-headings` | csv | none | Inject outline headings if model omits them. |
+| `--required-subheadings` | csv | none | Inject outline subheadings (attached to last required heading). |
+| `--required-phrases` | csv | none | Track presence (>=1) of body coverage phrases. |
+| `--required-content-file` | path | none | JSON file containing rich `requiredContent[]` items. |
 
 ---
 
@@ -439,6 +447,7 @@ Behavior:
 - Preserves topic order under concurrency
 - Per-article errors caught (verbose logs); failed slots left undefined
 - Timings: `topicsMs`, `articlesMs`, `totalMs` + boundaries
+- Semantic required content: pass `--required-content-file` (article phase) OR programmatically supply `baseRequiredContent` and a `requiredContentFactory` (see Programmatic APIs) to dynamically tailor required headings / subheadings / mentions per topic.
 
 Use for scheduled batches, editorial ideation → draft generation, or domain coverage.
 
@@ -557,6 +566,98 @@ Scoring heuristic: `(confidence || 0.55) - riskFlags.length * 0.05` descending.
 ```
 
 Access canonical data via `output.content` & diagnostics via `output.runtime`. The same wrapper is passed to `onTopics` (topics) and a richer callback payload is passed to `onArticle` (articles) containing content + runtime + echoed input.
+
+### Required Content (Semantic Requirements)
+
+Two ways to express mandatory coverage:
+- Legacy arrays: `requiredOutlineHeadings`, `requiredOutlineSubheadings`, `requiredCoveragePhrases`.
+- Rich list: `requiredContent[]` objects loaded via API or `--required-content-file`.
+
+`requiredContent` item shape:
+```jsonc
+[
+  {
+    "text": "Financial Metrics Overview",
+    "intent": "heading" // adds outline heading if missing
+  },
+  {
+    "text": "Net Present Value (NPV)",
+    "intent": "subheading" // forces a subheading
+  },
+  {
+    "text": "discounted cash flow",
+    "intent": "mention",
+    "minMentions": 2,
+    "optional": false,
+    "matchMode": "substring"
+  }
+]
+```
+Intents:
+- `heading` → mapped to outline heading requirement
+- `subheading` → mapped to subheading requirement
+- `mention` / `section` → tracked as body coverage phrase (supports `minMentions`)
+
+Runtime reporting (`runtime.strategy.requiredCoverage`):
+```jsonc
+{
+  "required": ["Financial Metrics Overview", "Net Present Value (NPV)", "discounted cash flow"],
+  "fulfilled": ["Financial Metrics Overview", "discounted cash flow"],
+  "missing": ["Net Present Value (NPV)"],
+  "items": [
+    { "text": "Financial Metrics Overview", "intent": "mention", "requiredMentions": 1, "foundMentions": 1, "fulfilled": true },
+    { "text": "Net Present Value (NPV)", "intent": "mention", "requiredMentions": 1, "foundMentions": 0, "fulfilled": false },
+    { "text": "discounted cash flow", "intent": "mention", "requiredMentions": 2, "foundMentions": 2, "fulfilled": true }
+  ]
+}
+```
+Notes:
+- Legacy arrays + `requiredContent` are merged; duplicates de-duped (case-insensitive).
+- `minMentions` defaults to 1. Optional items omitted from `missing` when not fulfilled.
+- Future: non-fulfilled items with `injectStrategy` may trigger auto insertion.
+ - Overuse detection: flagged if `foundMentions > maxMentions` (when provided) OR heuristic `(found > minMentions*8 && found > 12)`; runtime exposes `items[].overused` + `requiredCoverage.overused[]`.
+ - `strictRequired`: When enabled and any missing or overused items exist, `requiredCoverage.strictFailed=true` (CLI uses non-zero exit code for CI gating).
+
+### Automation Dynamic Required Content
+Programmatic factory merge order (later overrides / tightens earlier):
+1. `baseRequiredContent`
+2. `requiredContentFactory(topic)` return value
+3. Static `article.requiredContent`
+
+Intent precedence upgrade: `section > heading > subheading > mention`. On merge: higher intent replaces lower; `minMentions` takes max; `maxMentions` takes min (stricter). Conflicts normalize so `minMentions <= maxMentions`.
+
+Automation example:
+```ts
+import { autoGenerateArticlesFromTopics } from './src/automation/auto-generate.js';
+await autoGenerateArticlesFromTopics({
+  topics: { domain: 'Fintech Malaysia payments', model: 'gpt-4o-mini', limit: 5 },
+  article: {
+    model: 'gpt-4o-mini',
+    minWords: 900,
+    maxWords: 1100,
+    requiredContent: [
+      { text: 'Regulatory landscape', intent: 'heading' },
+      { text: 'Bank Negara Malaysia', intent: 'mention', minMentions: 2, maxMentions: 5 }
+    ],
+    strictRequired: true,
+    exportModes: ['json']
+  },
+  baseRequiredContent: [
+    { text: 'digital banking license', intent: 'mention', minMentions: 1, maxMentions: 4 }
+  ],
+  requiredContentFactory: (topic) => {
+    const lower = topic.toLowerCase();
+    const arr: any[] = [];
+    if (lower.includes('payment')) arr.push({ text: 'e-wallet adoption', intent: 'mention', minMentions: 1, maxMentions: 3 });
+    if (lower.includes('startup')) arr.push({ text: 'funding rounds', intent: 'subheading' });
+    return arr;
+  },
+  aggregateCoverage: true,
+  count: 1,
+  concurrency: 1,
+  verbose: true
+});
+```
 
 ## Automation (Topics → Articles)
 

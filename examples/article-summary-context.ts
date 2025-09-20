@@ -15,7 +15,6 @@ import { logArticle } from './util.js';
     lang: 'en',
     contextStrategy: 'summary',
     exportModes: ['json'],
-    outputDir: './output',
     writeFiles: true,
     verbose: true,
     onArticle(a: GenerateArticleCallbackPayload) {

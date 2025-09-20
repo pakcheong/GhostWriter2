@@ -15,9 +15,19 @@ import { logArticle } from './util.js';
     lang: 'en',
     contextStrategy: 'summary',
     exportModes: ['json', 'md'],
-    outputDir: './output',
     writeFiles: true,
-    verbose: true,
+    strictRequired: true,
+    verbose: false,
+    // Demonstrate semantic required content + legacy phrase array together
+    requiredContent: [
+      { text: 'Regulatory Environment for Digital Banking', intent: 'heading' },
+      { text: 'BNM Licensing Initiatives', intent: 'subheading' },
+      { text: 'digital banking licenses', intent: 'mention', minMentions: 2, maxMentions: 6 },
+      { text: 'Bank Negara Malaysia', intent: 'mention', minMentions: 1 },
+      { text: 'Islamic finance', intent: 'mention', optional: true, minMentions: 1 },
+      { text: 'e-wallet adoption', intent: 'section', minMentions: 1, maxMentions: 4 }
+    ],
+    requiredCoveragePhrases: ['open banking', 'regtech'],
     onArticle(a: GenerateArticleCallbackPayload) {
       logArticle('finance-my', a);
     }

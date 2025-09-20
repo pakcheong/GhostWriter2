@@ -12,8 +12,19 @@ export function fmtDuration(ms: number) {
   return `${s.toFixed(2)}s`;
 }
 
-export function logArticle(prefix: string, a: any) {
-  const totalMs = a?.timings?.totalMs;
-  const totalTokens = a?.usage?.total?.totalTokens;
-  console.log(`[sample:${prefix}] status=${a.status} duration=${fmtDuration(totalMs)} tokens=${totalTokens}`);
+export function logArticle(prefix: string, payload: any) {
+  const rt = payload?.output?.runtime;
+  const timings = rt?.timings;
+  const usage = rt?.usage;
+  const strictFailed = rt?.strategy?.requiredCoverage?.strictFailed;
+  const warning = rt?.warning;
+  const overused = rt?.strategy?.requiredCoverage?.overused?.length;
+  let status: string = 'success';
+  if (strictFailed) status = 'strict-failed';
+  else if (warning) status = 'warning';
+  else if (overused) status = 'overuse';
+  const totalMs: number | undefined = timings?.totalMs;
+  const totalTokens = usage?.total?.totalTokens;
+  const dur = typeof totalMs === 'number' ? fmtDuration(totalMs) : 'n/a';
+  console.log(`[sample:${prefix}] status=${status} duration=${dur} tokens=${totalTokens ?? 'n/a'}`);
 }

@@ -236,6 +236,10 @@ const { article } = await generateArticle({
 | `--tags / --categories` | Provide existing taxonomy |
 | `--lang` | Output language |
 | `--name-pattern` | Pattern tokens: `[timestamp]`, `[date]`, `[time]`, `[slug]`, `[title]` |
+| `--required-headings` | Force outline headings |
+| `--required-subheadings` | Force outline subheadings |
+| `--required-phrases` | Track/require phrases (>=1 mention) |
+| `--required-content-file` | Load rich semantic requiredContent list |
 
 ### Topics Filtering Precedence
 1. includeKeywords
@@ -314,6 +318,90 @@ fragment → extract [image] placeholders → (if HTML) turndown → restore pla
 unescape formatting → drop stray placeholder tokens → collapse blank lines → trim
 ```
 Single-pass cleanup via `sanitizeMarkdown`.
+
+### 12.1 Required Content (Semantic Enforcement)
+You can express structural & coverage requirements in two ways:
+- Simple arrays: `requiredOutlineHeadings`, `requiredOutlineSubheadings`, `requiredCoveragePhrases`.
+- Rich descriptors: `requiredContent[]` (via API or `--required-content-file`).
+
+`requiredContent` item fields:
+| Field | Purpose |
+|-------|---------|
+| `text` | Target text to enforce / track |
+| `intent` | `heading` | `subheading` | `mention` | `section` |
+| `minMentions` | For mention/section intents, required count (default 1) |
+| `optional` | If true, missing does not appear in `missing` list |
+| `matchMode` | `substring` (default) | `regex` | `loose` (whitespace-normalized) |
+| `injectStrategy` | Placeholder for future auto-insertion (`append-paragraph` etc.) |
+| `id` | Stable external correlation id |
+
+Example JSON:
+```jsonc
+[
+  { "text": "Capital Allocation", "intent": "heading" },
+  { "text": "Free Cash Flow", "intent": "subheading" },
+  { "text": "discounted cash flow", "intent": "mention", "minMentions": 2 },
+  { "text": "WACC", "intent": "mention", "optional": true }
+]
+```
+Runtime output snippet (`runtime.strategy.requiredCoverage`):
+```jsonc
+{
+  "required": ["Capital Allocation", "Free Cash Flow", "discounted cash flow", "WACC"],
+  "fulfilled": ["Capital Allocation", "discounted cash flow"],
+  "missing": ["Free Cash Flow"],
+  "items": [
+    { "text": "Capital Allocation", "intent": "mention", "requiredMentions": 1, "foundMentions": 1, "fulfilled": true },
+    { "text": "Free Cash Flow", "intent": "mention", "requiredMentions": 1, "foundMentions": 0, "fulfilled": false },
+    { "text": "discounted cash flow", "intent": "mention", "requiredMentions": 2, "foundMentions": 2, "fulfilled": true },
+    { "text": "WACC", "intent": "mention", "requiredMentions": 1, "foundMentions": 0, "fulfilled": false, "optional": true }
+  ]
+}
+```
+Notes: intents `heading` / `subheading` are enforced at outline time. `mention`/`section` currently identical (future: dedicated section injection). Duplicates across legacy arrays and `requiredContent` are de‑duplicated case-insensitively.
+
+#### 12.1.1 Dynamic Factories & Automation Merge
+Automation layer now supports semantic required content synthesis per topic:
+
+Merge order (earlier ← overridden by later when stricter):
+1. `baseRequiredContent`
+2. `requiredContentFactory(topic)` result
+3. Static `article.requiredContent`
+
+Rules:
+- Intent upgrade precedence: `section > heading > subheading > mention` (never downgrade)
+- `minMentions`: keep max (ensures stricter floor)
+- `maxMentions`: keep min (ensures stricter ceiling); clamp if `min > max`
+- Overuse: `found > maxMentions` OR (no max & `found > minMentions*8 && found > 12`)
+- Strict mode: `strictRequired` marks `requiredCoverage.strictFailed` when missing OR overused.
+
+Aggregate Coverage (`aggregateCoverage`): builds batch summary of per-phrase missing / overused counts for QA analytics.
+
+Example:
+```ts
+await autoGenerateArticlesFromTopics({
+  topics: { domain: 'Fintech Malaysia payments', model: 'gpt-4o-mini', limit: 5 },
+  article: {
+    model: 'gpt-4o-mini',
+    requiredContent: [
+      { text: 'Regulatory landscape', intent: 'heading' },
+      { text: 'Bank Negara Malaysia', intent: 'mention', minMentions: 2, maxMentions: 5 }
+    ],
+    strictRequired: true,
+    exportModes: ['json']
+  },
+  baseRequiredContent: [ { text: 'digital banking license', intent: 'mention', minMentions: 1, maxMentions: 4 } ],
+  requiredContentFactory: (topic) => {
+    const lower = topic.toLowerCase();
+    const arr: any[] = [];
+    if (lower.includes('payment')) arr.push({ text: 'e-wallet adoption', intent: 'mention', minMentions: 1, maxMentions: 3 });
+    if (lower.includes('startup')) arr.push({ text: 'funding rounds', intent: 'subheading' });
+    return arr;
+  },
+  aggregateCoverage: true,
+  count: 1
+});
+```
 
 ---
 ## 13. Usage & Pricing

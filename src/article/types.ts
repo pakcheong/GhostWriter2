@@ -41,6 +41,16 @@ export interface GenerateArticleCallbackInputMetaInput {
   writeFiles: boolean;
   /** Verbose logging flag passed in */
   verbose?: boolean;
+  /** Required outline-level headings caller expects to appear (will be auto-added if missing) */
+  requiredOutlineHeadings?: string[];
+  /** Required subheadings caller expects (attached to last or new heading if absent) */
+  requiredOutlineSubheadings?: string[];
+  /** Required coverage phrases that should appear at least once in body (tracked) */
+  requiredCoveragePhrases?: string[];
+  /** Rich semantic required content descriptors provided (normalized internally) */
+  requiredContent?: RequiredContentItem[];
+  /** Whether strict mode was enabled (process/CI may fail on violations) */
+  strictRequired?: boolean;
 }
 
 export interface GenerateArticleCallbackMeta {
@@ -84,8 +94,36 @@ export interface ArticleRuntime {
   baseName: string;
   /** Model provenance: requested vs resolved + provider mapping */
   model: { requested?: string; resolved: string; provider: 'openai' | 'deepseek' | 'lmstudio' };
-  /** Strategy and duplication diagnostics */
-  strategy: { context: { requested: ContextStrategy; effective: ContextStrategy }; duplicateRatio: number };
+  /** Strategy, duplication diagnostics, and coverage status */
+  strategy: {
+    context: { requested: ContextStrategy; effective: ContextStrategy };
+    duplicateRatio: number;
+    requiredCoverage?: {
+      required: string[];
+      fulfilled: string[];
+      missing: string[];
+      /** Items whose usage exceeded explicit or heuristic max guidance */
+      overused?: string[];
+      /** True when strictRequired enabled and there are missing or overused items */
+      strictFailed?: boolean;
+      items: Array<{
+        text: string;
+        intent: 'mention' | 'section';
+        requiredMentions: number;
+        foundMentions: number;
+        fulfilled: boolean;
+        optional?: boolean;
+        id?: string;
+        minMentions?: number;
+        /** Echo of configured/heuristic soft upper bound */
+        maxMentions?: number;
+        /** True if foundMentions > maxMentions (when defined) or heuristic triggered */
+        overused?: boolean;
+        /** Mentions density per 1000 total body tokens (approx) */
+        densityPerK?: number;
+      }>;
+    };
+  };
   /** Counts of macro sections and total subheadings */
   counts: { sectionCount: number; subheadingTotal: number };
   /** Timing breakdown (ms) including per-section list */
@@ -219,6 +257,44 @@ export interface GenerateArticleOptions {
    * Precedence: namePattern > outBaseName > derived slug/title.
    */
   namePattern?: string;
+  /** Force outline to include these headings (added if model omits) */
+  requiredOutlineHeadings?: string[];
+  /** Force outline to include these subheadings (attached to final heading if placement unclear) */
+  requiredOutlineSubheadings?: string[];
+  /** Require body to cover these phrases at least once (tracked; may supplement later) */
+  requiredCoveragePhrases?: string[];
+  /** Higher-level semantic required content list (will be decomposed into headings/subheadings/phrases) */
+  requiredContent?: RequiredContentItem[];
+  /** Enforce required content strictly: fail (exit non-zero in CLI) on missing/overused */
+  strictRequired?: boolean;
+}
+
+/**
+ * Unified required content descriptor allowing semantic intent beyond simple phrase presence.
+ * Internally we map:
+ *  intent 'heading' -> requiredOutlineHeadings
+ *  intent 'subheading' -> requiredOutlineSubheadings
+ *  intent 'mention'/'section' -> requiredCoveragePhrases (presence check) and optional injection later.
+ */
+export interface RequiredContentItem {
+  /** Free-form description or target textual anchor */
+  text: string;
+  /** Desired structural intent */
+  intent?: 'heading' | 'subheading' | 'mention' | 'section';
+  /** Require at least this many mentions in body (mention/section intents) */
+  minMentions?: number;
+  /** Soft upper bound to discourage overuse; if exceeded flagged but not fatal unless strict */
+  maxMentions?: number;
+  /** If true do not raise warning when missing */
+  optional?: boolean;
+  /** How to match; current support: substring | regex | loose (basic normalization) */
+  matchMode?: 'substring' | 'regex' | 'loose';
+  /** When missing and intent is mention/section, attempt injection as separate paragraph or section */
+  injectStrategy?: 'append-paragraph' | 'append-section' | 'none';
+  /** Additional guidance appended to prompt for this item (model hint) */
+  notes?: string;
+  /** Optional stable identifier for external correlation */
+  id?: string;
 }
 
 export type { ArticleJSON };

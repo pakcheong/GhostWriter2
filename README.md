@@ -153,7 +153,7 @@ Below: detailed article CLI reference; topics & automation documented later.
 | `--context` | `outline`\|`full`\|`summary` | `outline` | Cohesion strategy across sections. |
 | `--export` | `json`\|`html`\|`md`\|`all` | `json` | Output format(s); `all` = json+html+md. |
 | `--out` | string | Derived from slug | Base filename (no extension). |
-| `--outdir` | string | `./result` | Output directory. |
+| `--outdir` | string | `./.tmp` | Output directory. |
 | (programmatic) `namePattern` | string | none | Pattern tokens: `[timestamp]`, `[date]`, `[time]`, `[slug]`, `[title]`. Overrides `--out`. |
 | `--price-in` | number | from `.env` | Override input token price. |
 | `--price-out` | number | from `.env` | Override output token price. |
@@ -240,7 +240,7 @@ Security / safety:
 
 Result directory structure example (with `all`):
 ```
-result/
+.tmp/
   edge-caching-strategies-in-2025.json
   edge-caching-strategies-in-2025.html
   edge-caching-strategies-in-2025.md

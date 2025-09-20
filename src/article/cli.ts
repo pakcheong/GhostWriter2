@@ -43,7 +43,7 @@ if (isMain) {
         '  --context <outline|full|summary> Context strategy (default outline)\n' +
         '  --export <json,html,md|all>      Export formats (default json)\n' +
         '  --out <basename>                 Output base filename override\n' +
-        '  --outdir <dir>                   Output directory (default ./result)\n' +
+        '  --outdir <dir>                   Output directory (default ./.tmp)\n' +
         '  --name-pattern <pattern>         Dynamic name pattern ([timestamp],[date],[time],[slug],[title])\n' +
         '  --timestamp <ms>                 Fixed run timestamp (number)\n' +
         '  --price-in <number>              Override input price per 1K tokens\n' +
@@ -66,7 +66,7 @@ if (isMain) {
     const contextStrategy = (getArg('--context') || 'outline') as ContextStrategy;
     const exportModes = parseExportModes(getArg('--export'));
     const outArg = getArg('--out');
-    const outDirArg = getArg('--outdir') || path.join(process.cwd(), 'result');
+    const outDirArg = getArg('--outdir') || path.join(process.cwd(), '.tmp');
     const priceInArg = getArg('--price-in');
     const priceOutArg = getArg('--price-out');
     const namePattern = getArg('--name-pattern');

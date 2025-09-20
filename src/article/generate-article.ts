@@ -187,7 +187,7 @@ export async function generateArticle(
     priceOutPerK,
     exportModes = ['json'],
     outBaseName,
-    outputDir = path.join(process.cwd(), 'result'),
+    outputDir = path.join(process.cwd(), '.tmp'),
     singleRunTimestamp,
     writeFiles = true,
     verbose = false,
@@ -355,7 +355,7 @@ export async function generateArticle(
   const files: { json?: string; html?: string; md?: string } = {};
   let exportMs = 0;
   const runTs = singleRunTimestamp ?? Date.now();
-  const outDir = outputDir || path.join(process.cwd(), 'result');
+  const outDir = outputDir || path.join(process.cwd(), '.tmp');
   const defaultBase = sanitizeBaseName(baseArticle.slug || baseArticle.title || 'article');
   let baseName: string;
   if (namePattern) {

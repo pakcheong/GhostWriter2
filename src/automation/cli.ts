@@ -6,14 +6,19 @@ import { autoGenerateArticlesFromTopics } from './auto-generate.js';
 import { getArg } from '../utils.js';
 
 function parseList(val?: string): string[] | undefined {
-  if (!val) return undefined; return val.split(',').map(s => s.trim()).filter(Boolean);
+  if (!val) return undefined;
+  return val
+    .split(',')
+    .map((s: string) => s.trim())
+    .filter(Boolean);
 }
 
 const isMain = import.meta.url === pathToFileURL(process.argv[1]).href;
 if (isMain) {
   (async () => {
     if (process.argv.includes('--help') || process.argv.includes('-h')) {
-      const help = 'ghostwriter automation (topics + multi-article)\n\n' +
+      const help =
+        'ghostwriter automation (topics + multi-article)\n\n' +
         'Usage: ghostwriter-auto [options]\n\n' +
         'Topic Generation Options:\n' +
         '  --domain <string>                Domain / niche focus (required)\n' +
@@ -48,7 +53,10 @@ if (isMain) {
       process.exit(0);
     }
     const domain = getArg('--domain');
-    if (!domain) { console.error('Error: --domain is required'); process.exit(1); }
+    if (!domain) {
+      console.error('Error: --domain is required');
+      process.exit(1);
+    }
 
     // Topic opts
     const tModel = getArg('--t-model') || process.env.OPENAI_MODEL || 'gpt-4o-mini';
@@ -60,9 +68,21 @@ if (isMain) {
     const includeRegexRaw = getArg('--include-regex');
     const excludeRegexRaw = getArg('--exclude-regex');
     let includeRegex: RegExp | string | undefined;
-    if (includeRegexRaw) { try { includeRegex = new RegExp(includeRegexRaw, 'i'); } catch { console.warn('[auto-cli] invalid include-regex ignored'); } }
+    if (includeRegexRaw) {
+      try {
+        includeRegex = new RegExp(includeRegexRaw, 'i');
+      } catch {
+        console.warn('[auto-cli] invalid include-regex ignored');
+      }
+    }
     let excludeRegex: RegExp | string | undefined;
-    if (excludeRegexRaw) { try { excludeRegex = new RegExp(excludeRegexRaw, 'i'); } catch { console.warn('[auto-cli] invalid exclude-regex ignored'); } }
+    if (excludeRegexRaw) {
+      try {
+        excludeRegex = new RegExp(excludeRegexRaw, 'i');
+      } catch {
+        console.warn('[auto-cli] invalid exclude-regex ignored');
+      }
+    }
 
     // Article opts
     const aModel = getArg('--a-model') || process.env.OPENAI_MODEL || 'gpt-4o-mini';
@@ -72,12 +92,15 @@ if (isMain) {
     const exportRaw = getArg('--export');
     const exportModes = (() => {
       if (!exportRaw) return ['json'];
-      if (exportRaw.toLowerCase().trim() === 'all') return ['json','html','md'];
-      return exportRaw.split(',').map(s => s.trim()).filter(x => x === 'json' || x === 'html' || x === 'md');
+      if (exportRaw.toLowerCase().trim() === 'all') return ['json', 'html', 'md'];
+      return exportRaw
+        .split(',')
+        .map((s: string) => s.trim())
+        .filter((x: string) => x === 'json' || x === 'html' || x === 'md');
     })();
     const outDir = getArg('--outdir') || path.join(process.cwd(), 'result');
-    const tags = parseList(getArg('--tags'))?.map(s => s.toLowerCase());
-    const categories = parseList(getArg('--categories'))?.map(s => s.toLowerCase());
+    const tags = parseList(getArg('--tags'))?.map((s) => s.toLowerCase());
+    const categories = parseList(getArg('--categories'))?.map((s) => s.toLowerCase());
     const styleNotes = getArg('--style') || 'helpful, concise, SEO-aware';
     const namePattern = getArg('--name-pattern');
 
@@ -132,5 +155,8 @@ if (isMain) {
     } else {
       console.log(`\n[automation-cli] Articles generated: ${res.articles.length}`);
     }
-  })().catch(err => { console.error(err?.message || err); process.exit(1); });
+  })().catch((err) => {
+    console.error(err?.message || err);
+    process.exit(1);
+  });
 }

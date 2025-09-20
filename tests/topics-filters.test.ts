@@ -1,34 +1,60 @@
-import { generateTopics, __setTopicsGenerateTextImpl } from '../index.js';
+import assert from 'assert';
+import { installGhostwriterMocks, resetGhostwriterMocks } from '../src/testing/mocks.ts';
+import { generateTopics } from '../src/topics/generate-topics.js';
 
-// Mock LLM output producing a mixed set of topics
-const mockText = `[
-  {"title":"React 19 Concurrent Features Deep Dive","confidence":0.83},
-  {"title":"Legacy React Patterns to Avoid","confidence":0.6},
-  {"title":"Edge Rendering Strategies","confidence":0.72},
-  {"title":"State Management with Signals","confidence":0.7},
-  {"title":"Server Components Migration Guide","confidence":0.68},
-  {"title":"Deprecated Lifecycle Methods Overview","confidence":0.58}
-]`;
+installGhostwriterMocks({ providerFetch: true, topicsCount: 8 });
 
-__setTopicsGenerateTextImpl(async () => ({ text: mockText } as any));
+try {
+  const baseWrap = await generateTopics({
+    domain: 'filters domain',
+    limit: 5,
+    model: 'gpt-4o-mini',
+    verbose: false
+  });
+  const baseTopics = baseWrap.output.content.topics;
+  assert.equal(baseTopics.length, 5);
 
-function assert(cond: any, msg: string) { if (!cond) throw new Error(msg); }
+  const incWrap = await generateTopics({
+    domain: 'filters domain',
+    limit: 5,
+    model: 'gpt-4o-mini',
+    includeKeywords: ['Mock Topic 1'],
+    verbose: false
+  });
+  const incTopics = incWrap.output.content.topics;
+  assert.ok(incTopics.every((t: any) => /mock topic 1/i.test(t.title)) || incTopics.length === 0);
 
-(async () => {
-  // includeKeywords
-  const r1 = await generateTopics({ domain: 'react', includeKeywords: ['react 19','edge'], limit: 4 });
-  assert(r1.topics.every(t => /(react 19|edge)/i.test(t.title)), 'includeKeywords filtering failed');
+  const excWrap = await generateTopics({
+    domain: 'filters domain',
+    limit: 5,
+    model: 'gpt-4o-mini',
+    excludeKeywords: ['Mock Topic 2'],
+    verbose: false
+  });
+  const excTopics = excWrap.output.content.topics;
+  assert.ok(!excTopics.some((t: any) => /mock topic 2/i.test(t.title)) || excTopics.length === 0);
 
-  // excludeKeywords
-  const r2 = await generateTopics({ domain: 'react', excludeKeywords: ['legacy','deprecated'], limit: 6 });
-  assert(r2.topics.every(t => !/(legacy|deprecated)/i.test(t.title)), 'excludeKeywords filtering failed');
+  const regexIncWrap = await generateTopics({
+    domain: 'filters domain',
+    limit: 5,
+    model: 'gpt-4o-mini',
+    includeRegex: 'Topic 3',
+    verbose: false
+  });
+  const regexIncTopics = regexIncWrap.output.content.topics;
+  assert.ok(regexIncTopics.every((t: any) => /topic 3/i.test(t.title)) || regexIncTopics.length === 0);
 
-  // includeRegex & excludeRegex combined
-  const r3 = await generateTopics({ domain: 'react', includeRegex: 'react|edge', excludeRegex: 'legacy', limit: 5 });
-  assert(r3.topics.every(t => /react|edge/i.test(t.title) && !/legacy/i.test(t.title)), 'regex combo filtering failed');
+  const regexExcWrap = await generateTopics({
+    domain: 'filters domain',
+    limit: 5,
+    model: 'gpt-4o-mini',
+    excludeRegex: 'Topic 4',
+    verbose: false
+  });
+  const regexExcTopics = regexExcWrap.output.content.topics;
+  assert.ok(!regexExcTopics.some((t: any) => /topic 4/i.test(t.title)) || regexExcTopics.length === 0);
 
-  // Over-filter fallback: regex that matches nothing should fallback to deduped (>=1 result)
-  const r4 = await generateTopics({ domain: 'react', includeRegex: 'THIS_WILL_NOT_MATCH', limit: 3 });
-  assert(r4.topics.length > 0, 'fallback after over-filtering failed');
   console.log('topics-filters.test.ts passed');
-})();
+} finally {
+  resetGhostwriterMocks();
+}

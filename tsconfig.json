@@ -21,7 +21,8 @@
     "sourceMap": true,
 
     /* Other */
-    "resolveJsonModule": true
+    "resolveJsonModule": true,
+    "types": ["node"]
   },
   "include": ["index.ts", "src/**/*.ts"],
   "exclude": ["node_modules", "dist"]

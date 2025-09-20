@@ -10,7 +10,10 @@ function parseExportModes(raw?: string): ExportMode[] {
   if (!raw) return ['json'];
   const lower = raw.toLowerCase().trim();
   if (lower === 'all') return ['json', 'html', 'md'];
-  const parts = lower.split(',').map((s) => s.trim()).filter(Boolean);
+  const parts = lower
+    .split(',')
+    .map((s: string) => s.trim())
+    .filter(Boolean);
   const allowed: ExportMode[] = [];
   for (const p of parts) {
     if (p === 'json' || p === 'html' || p === 'md') {
@@ -24,7 +27,8 @@ const isMain = import.meta.url === pathToFileURL(process.argv[1]).href;
 if (isMain) {
   (async () => {
     if (process.argv.includes('--help') || process.argv.includes('-h')) {
-      const help = 'ghostwriter article generator (moved to src/article/cli.ts)\n\n' +
+      const help =
+        'ghostwriter article generator (moved to src/article/cli.ts)\n\n' +
         'Usage: ghostwriter [options]\n\n' +
         'Options:\n' +
         '  --model <model>                  Model id (env fallback)\n' +
@@ -39,7 +43,7 @@ if (isMain) {
         '  --context <outline|full|summary> Context strategy (default outline)\n' +
         '  --export <json,html,md|all>      Export formats (default json)\n' +
         '  --out <basename>                 Output base filename override\n' +
-        '  --outdir <dir>                   Output directory (default ./result)\n' +
+        '  --outdir <dir>                   Output directory (default ./.tmp)\n' +
         '  --name-pattern <pattern>         Dynamic name pattern ([timestamp],[date],[time],[slug],[title])\n' +
         '  --timestamp <ms>                 Fixed run timestamp (number)\n' +
         '  --price-in <number>              Override input price per 1K tokens\n' +
@@ -62,7 +66,7 @@ if (isMain) {
     const contextStrategy = (getArg('--context') || 'outline') as ContextStrategy;
     const exportModes = parseExportModes(getArg('--export'));
     const outArg = getArg('--out');
-    const outDirArg = getArg('--outdir') || path.join(process.cwd(), 'result');
+    const outDirArg = getArg('--outdir') || path.join(process.cwd(), '.tmp');
     const priceInArg = getArg('--price-in');
     const priceOutArg = getArg('--price-out');
     const namePattern = getArg('--name-pattern');
@@ -73,9 +77,18 @@ if (isMain) {
     const verboseFlag = process.argv.includes('--verbose');
     const verbose = verboseFlag ? true : quietFlag ? false : true;
 
-    const keywords = keywordsStr.split(',').map((s) => s.trim()).filter(Boolean);
-    const existingTags = tagsStr.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
-    const existingCategories = categoriesStr.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
+    const keywords = keywordsStr
+      .split(',')
+      .map((s: string) => s.trim())
+      .filter(Boolean);
+    const existingTags = tagsStr
+      .split(',')
+      .map((s: string) => s.trim().toLowerCase())
+      .filter(Boolean);
+    const existingCategories = categoriesStr
+      .split(',')
+      .map((s: string) => s.trim().toLowerCase())
+      .filter(Boolean);
 
     await generateArticle({
       model: modelArg,
@@ -97,7 +110,7 @@ if (isMain) {
       // printUsage intentionally not exposed via separate flags to match GenerateArticleOptions exactly
       singleRunTimestamp,
       namePattern,
-      verbose,
+      verbose
     });
   })().catch((err) => {
     console.error(err?.message || err);

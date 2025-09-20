@@ -7,10 +7,9 @@ pnpm-lock.yaml
 .DS_Store
 
 # Builds / Outputs
+.tmp/
 dist/
-result/
 coverage/
-output/
 
 # Env
 .env

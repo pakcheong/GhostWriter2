@@ -3,9 +3,14 @@ import { maskKey } from './utils.js';
 
 const loggedKeyOnce: Record<string, boolean> = {};
 
-interface ClientOptions { verbose: boolean; }
+interface ClientOptions {
+  verbose: boolean;
+}
 
-export function getClientForProvider(provider: 'openai' | 'deepseek' | 'lmstudio', { verbose }: ClientOptions) {
+export function getClientForProvider(
+  provider: 'openai' | 'deepseek' | 'lmstudio',
+  { verbose }: ClientOptions
+) {
   if (provider === 'deepseek') {
     const key = process.env.DEEPSEEK_API_KEY;
     if (!key) throw new Error('Missing DEEPSEEK_API_KEY.');

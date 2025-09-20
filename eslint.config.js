@@ -1,6 +1,8 @@
 // eslint.config.js
 import js from '@eslint/js';
 import tseslint from 'typescript-eslint';
+import prettier from 'eslint-plugin-prettier';
+import prettierConfig from 'eslint-config-prettier';
 
 export default [
   // Ignore patterns
@@ -10,6 +12,9 @@ export default [
 
   // Base JS recommended rules
   js.configs.recommended,
+
+  // Prettier config to disable stylistic rules that conflict
+  prettierConfig,
 
   // TypeScript recommended (no type-checking, fast)
   ...tseslint.configs.recommended,
@@ -25,6 +30,9 @@ export default [
         // If you want type-aware rules:
         // project: ['./tsconfig.json']
       }
+    },
+    plugins: {
+      prettier
     },
     rules: {
       // Enforce single quotes, allow double quotes to avoid escape hell
@@ -44,7 +52,10 @@ export default [
       '@typescript-eslint/no-explicit-any': 'off',
 
       // Keep files clean
-      'no-irregular-whitespace': 'error'
+      'no-irregular-whitespace': 'error',
+
+      // Prettier formatting as an ESLint rule (so --fix runs Prettier)
+      'prettier/prettier': ['error', { printWidth: 110, singleQuote: true, trailingComma: 'none', semi: true }]
     }
   }
 ];

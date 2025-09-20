@@ -1,27 +1,23 @@
 // scripts/utils.ts
 import TurndownService from 'turndown';
 import { marked } from 'marked';
-import {
-  encoding_for_model,
-  get_encoding,
-  type TiktokenModel,
-} from '@dqbd/tiktoken';
+import { encoding_for_model, get_encoding, type TiktokenModel } from '@dqbd/tiktoken';
 
 /* ---------------- Turndown (HTML → Markdown) ---------------- */
 
 const turndown = new TurndownService({
   headingStyle: 'atx',
-  codeBlockStyle: 'fenced',
+  codeBlockStyle: 'fenced'
 });
 
 turndown.addRule('strongToBold', {
   filter: ['strong', 'b'],
-  replacement: (content) => (content ? `**${content}**` : ''),
+  replacement: (content) => (content ? `**${content}**` : '')
 });
 
 turndown.addRule('emToItalic', {
   filter: ['em', 'i'],
-  replacement: (content) => (content ? `*${content}*` : ''),
+  replacement: (content) => (content ? `*${content}*` : '')
 });
 
 /**
@@ -39,7 +35,9 @@ export function sanitizeMarkdown(input: string): string {
     masked = turndown.turndown(masked);
   }
 
-  placeholders.forEach((ph, idx) => { masked = masked.replace(`___IMAGE_PLACEHOLDER_${idx}___`, ph); });
+  placeholders.forEach((ph, idx) => {
+    masked = masked.replace(`___IMAGE_PLACEHOLDER_${idx}___`, ph);
+  });
   // Inline normalization of escaped markdown artifacts & leaked placeholders
   let out = masked.trim();
   out = out.replace(/___IMAGE_PLACEHOLDER_\d+___/g, '');
@@ -59,7 +57,9 @@ export function sanitizeMarkdown(input: string): string {
  * - Collapsing excessive blank lines (3+ -> 2)
  */
 // Deprecated: no longer needed externally; kept for backward compatibility
-export function normalizeGeneratedMarkdown(markdown: string): string { return sanitizeMarkdown(markdown); }
+export function normalizeGeneratedMarkdown(markdown: string): string {
+  return sanitizeMarkdown(markdown);
+}
 
 /* ---------------- Markdown → HTML ---------------- */
 
@@ -157,7 +157,7 @@ export function addUsage(a: Usage, b: Partial<Usage>): Usage {
   return {
     promptTokens: a.promptTokens + (b.promptTokens ?? 0),
     completionTokens: a.completionTokens + (b.completionTokens ?? 0),
-    totalTokens: a.totalTokens + (b.totalTokens ?? 0),
+    totalTokens: a.totalTokens + (b.totalTokens ?? 0)
   };
 }
 

@@ -153,7 +153,7 @@ Below: detailed article CLI reference; topics & automation documented later.
 | `--context` | `outline`\|`full`\|`summary` | `outline` | Cohesion strategy across sections. |
 | `--export` | `json`\|`html`\|`md`\|`all` | `json` | Output format(s); `all` = json+html+md. |
 | `--out` | string | Derived from slug | Base filename (no extension). |
-| `--outdir` | string | `./result` | Output directory. |
+| `--outdir` | string | `./.tmp` | Output directory. |
 | (programmatic) `namePattern` | string | none | Pattern tokens: `[timestamp]`, `[date]`, `[time]`, `[slug]`, `[title]`. Overrides `--out`. |
 | `--price-in` | number | from `.env` | Override input token price. |
 | `--price-out` | number | from `.env` | Override output token price. |
@@ -240,7 +240,7 @@ Security / safety:
 
 Result directory structure example (with `all`):
 ```
-result/
+.tmp/
   edge-caching-strategies-in-2025.json
   edge-caching-strategies-in-2025.html
   edge-caching-strategies-in-2025.md
@@ -306,84 +306,70 @@ LMSTUDIO_API_KEY=optional
 ```
 If `LMSTUDIO_API_KEY` is not set a placeholder key is used (LM Studio usually does not require one locally).
 
-### Testing Philosophy
-Deterministic tests use a mock `__setGenerateTextImpl` to avoid network calls and assert:
-- JSON shape (no `provider`, includes `timings`, `sectionTimings`, `status`).
-- Callback invocation (`onArticle`).
-- Pricing & usage aggregation.
+### Testing & Mock Server Policy
+All tests run without real network calls. A unified mock layer provides:
+| Capability | Description |
+|------------|-------------|
+| Deterministic outline/sections | Fixed outline (Intro/Body) & stable subsection Markdown |
+| Summaries | Static short summary string when requested |
+| Topics | Deterministic `Mock Topic N` items (configurable count) |
+| Provider fetch interception | Intercepts any `/chat/completions` request (Deepseek, LM Studio, future) |
+| Strict isolation | Any unexpected external `fetch` triggers an error |
 
-### Callback
-`onArticle?: (article: ArticleJSON) => void | Promise<void>` fires after the article object (with timings/status) is built and before function returns. Use it for streaming, additional persistence, or custom logging.
+Usage:
+```ts
+import { installGhostwriterMocks, resetGhostwriterMocks } from '../src/testing/mocks.ts';
+installGhostwriterMocks({ topicsCount: 4, providerFetch: true });
+// ...call generateTopics / generateArticle / autoGenerateArticlesFromTopics
+resetGhostwriterMocks();
+```
+Multi‑model tests exercise OpenAI (`gpt-4o-mini`), Deepseek (`deepseek-chat`), and LM Studio (`openai/gpt-oss-20b`) code paths entirely under mocks.
 
-Example callback payload (annotated):
+When adding a new provider: extend the fetch mock or supply a provider‑specific branch returning a deterministic response; never allow silent live calls in unit tests.
 
+### Callback (Wrapped Payload)
+`onArticle?: (payload: { output: ArticleJSON; input: {...}; meta: {...} }) => void | Promise<void>`
+
+The JSON export now contains this wrapper. Example (abridged):
 ```jsonc
 {
-  "title": "React 19: Key Changes Impacting Production Apps", // Article title generated in outline phase
-  "description": "Explore significant updates in React 19 and their implications...", // Short SEO meta description
-  "body": "## Introduction\n...", // Complete Markdown body (sections + subheadings)
-  "tags": ["react", "frontend", "release"], // Final tag set (normalized & deduped)
-  "categories": ["technology", "web"], // Final category set
-  "slug": "react-19-key-changes-impacting-production-apps", // URL/file-safe slug derived from title
-  "model": "gpt-4o-mini", // Model id used (provider inferred internally)
-  "status": "success", // 'success' | 'warning' (warning when duplicate outline ratio > 20%)
-  "timings": {
-    "totalMs": 8421, // End-to-end runtime including export phase
-    "outlineMs": 612, // Time to generate (and possibly retry) outline
-    "assembleMs": 15, // Time to assemble article object & aggregate metrics
-    "exportMs": 58, // Time writing non-JSON exports
-    "outlineAttempts": 1, // Number of outline generations (max 2 when duplication high)
-    "startTime": 1758267800123, // Epoch ms when run started
-    "endTime": 1758267808544 // Epoch ms when run finished
+  "output": { "title": "Edge Caching Strategies in 2025", "status": "success", "usage": { /* ... */ } },
+  "input": {
+    "topic": "Edge Caching Strategies in 2025",
+    "keywords": ["cdn","cache-control"],
+    "minWords": 1000,
+    "maxWords": 1400,
+    "lang": "en",
+    "contextStrategy": "summary",
+    "exportModes": ["json","md"],
+    "modelRequested": "gpt-4o-mini",
+    "modelResolved": "gpt-4o-mini",
+    "existingTags": ["performance"],
+    "writeFiles": true
   },
-  "sectionTimings": [
-    {
-      "heading": "Introduction", // Section H2 heading
-      "subheadingCount": 3, // Number of subheadings expanded under this section
-      "ms": 1120, // Total ms for all subheadings (+ summary if generated)
-      "subTimings": [ // Per-subheading generation durations
-        { "title": "Why React 19 Matters", "ms": 340 },
-        { "title": "Release Cadence Changes", "ms": 392 },
-        { "title": "Ecosystem Impact", "ms": 388 }
-      ],
-      "summaryMs": 74 // Present only when contextStrategy === 'summary'
-    }
-    // ...additional sections
-  ],
-  "usage": {
-    "outline": { "promptTokens": 620, "completionTokens": 210, "totalTokens": 830 }, // Outline phase usage
-    "sections": { "promptTokens": 4820, "completionTokens": 3980, "totalTokens": 8800 }, // Aggregate of all subsection calls
-    "summaries": { "promptTokens": 320, "completionTokens": 180, "totalTokens": 500 }, // Present only for summary strategy
-    "total": { "promptTokens": 5760, "completionTokens": 4370, "totalTokens": 10130 } // Sum of all phases
-  },
-  "cost": { // Present only if pricing resolved
-    "outline": 0.0042, // USD estimate for outline
-    "sections": 0.0584, // USD estimate for sections
-    "summaries": 0.0031, // USD estimate for summaries (if any)
-    "total": 0.0657, // Sum of available phase costs
-    "priceInPerK": 0.0003, // Input token price ($ per 1K)
-    "priceOutPerK": 0.0006 // Output token price ($ per 1K)
+  "meta": {
+    "runTimestamp": 1758267800123,
+    "baseName": "edge-caching-strategies-in-2025",
+    "outlineAttempts": 1,
+    "duplicateRatio": 0.0,
+    "provider": "openai",
+    "pricingResolved": { "inPerK": 0.0003, "outPerK": 0.0006, "found": true },
+    "timingsSummary": { "totalMs": 8421, "outlineMs": 612, "sectionsMs": 7210, "assembleMs": 15, "exportMs": 58 },
+    "sectionCount": 5,
+    "subheadingTotal": 17,
+    "contextStrategyEffective": "summary",
+    "warning": false
   }
 }
 ```
-
-Field reference summary:
-- title: Generated main article title.
-- description: Short SEO description.
-- body: Full Markdown content.
-- tags / categories: Final normalized lists.
-- slug: Safe identifier used for filenames.
-- model: Model id (provider not exposed separately).
-- status: Quality flag (duplicate outline ratio > threshold => warning).
-- timings: Aggregate phase durations + run boundaries.
-- sectionTimings: Per section timing + per-subheading breakdown.
-- usage: Token counts per phase (prompt/completion/total) + aggregate.
-- cost: Phase cost estimates & pricing (may be absent if pricing unknown).
-- outlineMs / assembleMs / exportMs: Individual timing components inside timings.
-- outlineAttempts: Outline retry count (max 2).
-- startTime / endTime: Wall-clock epoch ms boundaries of the run.
-- subTimings: Fine-grained per-subheading durations.
-- summaryMs: Time spent generating a section summary (only in summary strategy).
+Backward compatibility helper:
+```ts
+function onArticle(p: any) {
+  const article: any = p.output || p; // legacy support
+  console.log(article.title);
+}
+```
+`input` captures the sanitized generation parameters used. `meta` adds runtime diagnostics not already inside `output` (timings roll‑up, pricing resolution, duplication ratio, section/subheading counts, provider).
 
 ### Timings & Status
 `article.timings` includes `outlineMs`, `assembleMs`, `exportMs`, `totalMs`, `outlineAttempts`.
@@ -465,6 +451,14 @@ import { generateTopics } from './src/topics/generate-topics.js';
 import { autoGenerateArticlesFromTopics } from './src/automation/auto-generate.js';
 ```
 
+### Type Organization
+Domain option/result interfaces now live beside their feature logic:
+- Article types: `src/article/types.ts` (e.g. `GenerateArticleOptions`)
+- Topics types: `src/topics/types.ts` (e.g. `GenerateTopicsOptions`, `TopicCandidate`)
+- Automation types: `src/automation/types.ts` (e.g. `AutoGenerateOptions`, `AutoGenerateResult`)
+- Shared structural types (article JSON shape, timings, context enums) remain in `src/types.ts`.
+Update imports if you previously consumed `GenerateArticleOptions` from the root shared file.
+
 ---
 ## Roadmap / Potential Enhancements
 - WordPress publishing helper (`publish-to-wp.ts`) for bulk post creation (expects JSON bundle with `items[]`).
@@ -474,13 +468,36 @@ import { autoGenerateArticlesFromTopics } from './src/automation/auto-generate.j
 - More granular quiet vs usage table controls
 - Pluggable scoring for topics
 - Post-generation validation hooks
+
+---
+
+## TODO
+
+These are concrete next steps planned for the project:
+
+1. Refactor `onArticle` callback payload structure:
+  - Wrap generation input parameters under a new key, e.g. `inputMeta` containing: `keywords`, `topic`, `wordCountRange`, `existingTags`, `existingCategories`, `lang` (and any future flags that materially affect output).
+  - Place the current article JSON (title/body/timings/usage/cost/etc.) under another key, e.g. `result`.
+  - Update all internal usages (automation pipeline, tests, and `examples/wordpress.ts`) to consume the new shape.
+
+2. Image generation pipeline:
+  - Implement extraction of `[image]...[/image]` placeholders → prompt construction.
+  - Add pluggable providers (initial targets: DALL·E 3, Nano Banana, Stable Diffusion / SDXL via Stability or Replicate).
+  - Support local caching, optional WordPress media upload, and replacement modes (`markdown` vs `html <figure>`).
+
+3. Tag quality improvements:
+  - Current AI-generated tags can be noisy / inconsistent.
+  - Add normalization & scoring pass: frequency analysis of keyword overlap, removal of generic or off-topic tags, enforce max count, and ensure alignment with `keywords` & detected entities.
+  - Optionally introduce a secondary lightweight model validation step ("Is this tag relevant? yes/no").
+
+> (Implementation order may shift; contributions welcome.)
 ## Topics Generation
 
-Programmatic example:
+Programmatic example (promise result):
 ```ts
 import { generateTopics } from './src/topics/generate-topics.js';
 
-const result = await generateTopics({
+const topicsResult = await generateTopics({
   domain: 'frontend engineering',
   model: 'gpt-4o-mini',
   limit: 12,
@@ -490,11 +507,26 @@ const result = await generateTopics({
   printUsage: true,
   verbose: true,
 });
-
-console.log(result.topics[0]);
+// Unified wrapper shape (mirrors article generator):
+// topicsResult = { input, output: { content, runtime } }
+const { output: { content, runtime }, input } = topicsResult;
+console.log(content.topics[0]);
 ```
 
-Returned fields per topic:
+Using the `onTopics` callback (receives the same wrapper object):
+```ts
+await generateTopics({
+  domain: 'frontend engineering',
+  limit: 8,
+  model: 'gpt-4o-mini',
+  onTopics(wrapped) {
+    const { output: { content }, input } = wrapped;
+    console.log('Callback topics for domain', input.domain, 'count=', content.topics.length);
+  }
+});
+```
+
+Returned fields per topic (content.topics[i]):
 - `title`
 - `rationale`
 - `confidence` (0–1)
@@ -509,6 +541,22 @@ Filtering precedence (applied post-dedupe, pre-scoring):
 If all filters eliminate results → fallback to unfiltered deduped list.
 
 Scoring heuristic: `(confidence || 0.55) - riskFlags.length * 0.05` descending.
+
+### Unified Wrapper Structure
+
+`generateArticle` and `generateTopics` both return a wrapper object:
+
+```ts
+{
+  input: { /* echoed request options + resolved model */ },
+  output: {
+    content: { /* pure semantic data (article or topics list) */ },
+    runtime: { /* timings, usage, pricing, counts, strategy */ }
+  }
+}
+```
+
+Access canonical data via `output.content` & diagnostics via `output.runtime`. The same wrapper is passed to `onTopics` (topics) and a richer callback payload is passed to `onArticle` (articles) containing content + runtime + echoed input.
 
 ## Automation (Topics → Articles)
 

@@ -1,4 +1,5 @@
 import { generateArticle } from '../dist/index.js';
+import { type GenerateArticleCallbackPayload } from '../src/article/types.js';
 import { logArticle } from './util.js';
 
 async function isLmStudioReachable(base?: string) {
@@ -25,7 +26,7 @@ async function isLmStudioReachable(base?: string) {
   const { article } = await generateArticle({
     model: process.env.LMSTUDIO_MODEL || 'openai/gpt-oss-20b',
     topic: 'Local Inference Optimization Techniques',
-    keywords: ['quantization','gguf','throughput'],
+    keywords: ['quantization', 'gguf', 'throughput'],
     minWords: 400,
     maxWords: 600,
     existingTags: ['llm'],
@@ -36,7 +37,9 @@ async function isLmStudioReachable(base?: string) {
     exportModes: ['json'],
     writeFiles: false,
     verbose: true,
-    onArticle(a: any) { logArticle('lmstudio', a); }
+    onArticle(a: GenerateArticleCallbackPayload) {
+      logArticle('lmstudio', a);
+    }
   });
   console.log('[sample:lmstudio] generated:', article.slug);
 })();

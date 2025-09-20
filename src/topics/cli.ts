@@ -6,14 +6,18 @@ import { getArg } from '../utils.js';
 
 function parseList(val?: string): string[] | undefined {
   if (!val) return undefined;
-  return val.split(',').map(s => s.trim()).filter(Boolean);
+  return val
+    .split(',')
+    .map((s: string) => s.trim())
+    .filter(Boolean);
 }
 
 const isMain = import.meta.url === pathToFileURL(process.argv[1]).href;
 if (isMain) {
   (async () => {
     if (process.argv.includes('--help') || process.argv.includes('-h')) {
-      const help = 'ghostwriter topics generator\n\n' +
+      const help =
+        'ghostwriter topics generator\n\n' +
         'Usage: ghostwriter-topics [options]\n\n' +
         'Options:\n' +
         '  --domain <string>                Domain or niche focus (required)\n' +
@@ -54,9 +58,21 @@ if (isMain) {
     const forceUsage = process.argv.includes('--usage');
 
     let includeRegex: RegExp | string | undefined;
-    if (includeRegexRaw) { try { includeRegex = new RegExp(includeRegexRaw, 'i'); } catch { console.warn('[topics-cli] invalid include-regex ignored'); } }
+    if (includeRegexRaw) {
+      try {
+        includeRegex = new RegExp(includeRegexRaw, 'i');
+      } catch {
+        console.warn('[topics-cli] invalid include-regex ignored');
+      }
+    }
     let excludeRegex: RegExp | string | undefined;
-    if (excludeRegexRaw) { try { excludeRegex = new RegExp(excludeRegexRaw, 'i'); } catch { console.warn('[topics-cli] invalid exclude-regex ignored'); } }
+    if (excludeRegexRaw) {
+      try {
+        excludeRegex = new RegExp(excludeRegexRaw, 'i');
+      } catch {
+        console.warn('[topics-cli] invalid exclude-regex ignored');
+      }
+    }
 
     const res = await generateTopics({
       domain,
@@ -74,14 +90,16 @@ if (isMain) {
     });
 
     if (!verbose) {
-      // Minimal output: list selected + topics
+      const {
+        output: { content }
+      } = res as any;
       console.log('\nSelected Topic:');
-      if (res.selectedIndex >= 0) console.log(' * ' + res.topics[res.selectedIndex].title);
+      if (content.selectedIndex >= 0) console.log(' * ' + content.topics[content.selectedIndex].title);
       else console.log(' (none)');
       console.log('\nTopics:');
-      res.topics.forEach((t, i) => console.log(`${i + 1}. ${t.title}`));
+      content.topics.forEach((t: any, i: number) => console.log(`${i + 1}. ${t.title}`));
     }
-  })().catch(err => {
+  })().catch((err) => {
     console.error(err?.message || err);
     process.exit(1);
   });

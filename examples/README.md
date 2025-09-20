@@ -10,6 +10,7 @@ Run with `npx tsx` (dev) or `node` (after build, copying them under dist if desi
 | `article-basic.ts` | Minimal single article generation (outline context). |
 | `article-summary-context.ts` | Article using summary context strategy. |
 | `article-lmstudio.ts` | Local LM Studio example (skips if unreachable). |
+| `article-deepseek-nationality-conflict-cn.ts` | Deepseek: 中文主题“国籍冲突/跨国婚姻”示例（summary上下文). |
 | `article-finance-malaysia.ts` | Fintech & digital banking landscape in Malaysia (EN). |
 | `automation-personal-finance-malaysia.ts` | Automation: multi Malaysia personal finance articles (EN). |
 | `topics-basic.ts` | Basic topics generation with usage & cost tables. |

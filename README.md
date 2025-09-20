@@ -474,6 +474,29 @@ import { autoGenerateArticlesFromTopics } from './src/automation/auto-generate.j
 - More granular quiet vs usage table controls
 - Pluggable scoring for topics
 - Post-generation validation hooks
+ 
+---
+
+## TODO
+
+These are concrete next steps planned for the project:
+
+1. Refactor `onArticle` callback payload structure:
+  - Wrap generation input parameters under a new key, e.g. `inputMeta` containing: `keywords`, `topic`, `wordCountRange`, `existingTags`, `existingCategories`, `lang` (and any future flags that materially affect output).
+  - Place the current article JSON (title/body/timings/usage/cost/etc.) under another key, e.g. `result`.
+  - Update all internal usages (automation pipeline, tests, and `examples/wordpress.ts`) to consume the new shape.
+
+2. Image generation pipeline:
+  - Implement extraction of `[image]...[/image]` placeholders → prompt construction.
+  - Add pluggable providers (initial targets: DALL·E 3, Nano Banana, Stable Diffusion / SDXL via Stability or Replicate).
+  - Support local caching, optional WordPress media upload, and replacement modes (`markdown` vs `html <figure>`).
+
+3. Tag quality improvements:
+  - Current AI-generated tags can be noisy / inconsistent.
+  - Add normalization & scoring pass: frequency analysis of keyword overlap, removal of generic or off-topic tags, enforce max count, and ensure alignment with `keywords` & detected entities.
+  - Optionally introduce a secondary lightweight model validation step ("Is this tag relevant? yes/no").
+
+> (Implementation order may shift; contributions welcome.)
 ## Topics Generation
 
 Programmatic example:

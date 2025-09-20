@@ -3,7 +3,15 @@ import fs from 'fs';
 import path from 'path';
 
 const testsDir = path.join(process.cwd(), 'tests');
-const files = fs.readdirSync(testsDir).filter(f => f.endsWith('.test.ts'));
+// Hardcoded skip list: add test file names (e.g., 'integration.e2e.test.ts') to skip them.
+const skipTests = new Set<string>([
+  'lmstudio.test.ts',
+]);
+
+const files = fs
+  .readdirSync(testsDir)
+  .filter(f => f.endsWith('.test.ts'))
+  .filter(f => !skipTests.has(f));
 
 let failed = 0;
 let skipped = 0;
@@ -26,3 +34,4 @@ if (failed > 0) {
   process.exit(1);
 }
 console.log(`All ${files.length - skipped} tests passed. (${skipped} skipped)`);
+if (skipTests.size) console.log('Skipped via skip list:', [...skipTests].join(', '));

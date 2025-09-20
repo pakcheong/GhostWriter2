@@ -37,7 +37,7 @@ const { files } = await generateArticle({
   lang: 'en',
   contextStrategy: 'outline',
   exportModes: ['json'],
-  outputDir: './output',
+  outputDir: './.tmp',
   writeFiles: true,
   singleRunTimestamp: runTs,
   namePattern: '[timestamp]-[title]',

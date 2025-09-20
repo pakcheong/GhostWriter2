@@ -18,11 +18,11 @@ import type {
   OutlineItem,
   OutlineResult,
   ArticleJSON,
-  GenerateArticleOptions,
   SectionTiming,
   SubTiming,
   ArticleTimings
 } from '../types.js';
+import type { GenerateArticleOptions } from './types.js';
 import { buildOutlinePrompt, buildSectionPrompt, buildSummaryPrompt } from './prompts.js';
 import { getClientForProvider } from '../model-config.js';
 import { extractUsage } from '../usage.js';

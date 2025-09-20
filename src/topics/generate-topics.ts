@@ -2,53 +2,8 @@
 import { resolveProviderForModel, safeGenerateText } from '../llm.js';
 import { getClientForProvider } from '../model-config.js';
 import type { Usage } from '../utils.js';
+import type { GenerateTopicsOptions, GenerateTopicsResult, TopicCandidate } from './types.js';
 
-export interface GenerateTopicsOptions {
-  domain: string; // e.g. technical | finance | health
-  model?: string; // LLM model name
-  limit?: number; // desired number of final candidates
-  verbose?: boolean;
-  lang?: string; // optional language hint for titles & rationale (e.g. 'en', 'zh', 'es')
-  priceInPerK?: string | number; // optional override
-  priceOutPerK?: string | number; // optional override
-  printUsage?: boolean; // print usage & cost table
-  onTopics?: (result: GenerateTopicsResult) => void | Promise<void>; // callback after assembly
-  includeKeywords?: string[]; // keep only topics containing ANY of these substrings (case-insensitive)
-  excludeKeywords?: string[]; // drop topics containing ANY of these substrings
-  includeRegex?: string | RegExp; // keep only topics whose title matches this regex
-  excludeRegex?: string | RegExp; // drop topics whose title matches this regex
-}
-
-export interface TopicCandidate {
-  title: string;
-  rationale?: string;
-  confidence?: number; // 0-1 self-estimated confidence
-  riskFlags?: string[];
-  sourceType: 'llm';
-}
-
-export interface GenerateTopicsResult {
-  domain: string;
-  mode: 'llm-only';
-  topics: TopicCandidate[]; // ordered list (includes selected)
-  selectedIndex: number; // index into topics (-1 if none)
-  usage: {
-    generation: Usage;
-    total: Usage;
-  };
-  cost?: {
-    generation?: number;
-    total?: number;
-    priceInPerK?: number;
-    priceOutPerK?: number;
-  };
-  timings: {
-    startTime: number;
-    endTime: number;
-    totalMs: number;
-    generationMs: number;
-  };
-}
 import { extractUsage } from '../usage.js';
 import { resolvePrices } from '../pricing.js';
 import { emptyUsage, addUsage, costEstimate, formatUSD } from '../utils.js';

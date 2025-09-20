@@ -483,52 +483,103 @@ user → generateArticle()
 
 ---
 <a id="roadmap-todo"></a>
-## 29. Roadmap & TODO
-### High Priority
-1. Callback payload redesign (inputMeta/result split)
-2. Image pipeline MVP (local + one hosted provider)
-3. Tag relevance scoring + generic filter
-4. Diagnostics block + cumulative warnings
+## 29. Roadmap & TODO (Structured)
 
-### Medium
-5. Partial continuation on subsection failure
-6. Publisher abstraction interface (WordPress adapter → plugin)
-7. Structured logging + JSON run summary
-8. Adaptive outline duplicate threshold
+Legend: Priority (P1=High, P2=Medium, P3=Low)  Effort (S <2d, M 2–5d, L >5d)
 
-### Low / Exploratory
-9. Multi-model pipeline (cheap outline + premium body)
-10. Streaming subsection output (progressive CLI)
-11. Section size adaptive prompts (token budgeting)
-12. Inline citation & source formatting optional mode
+### P1 Core Delivery
+1. Callback Payload Redesign (P1 / M)
+  - Goal: Safer evolution & clearer contract.
+  - Output Shape: `{ inputMeta: {...}, result: ArticleJSON }`.
+  - Migration: Dual mode via `LEGACY_CALLBACK=1` (one minor version), console deprecation notice when legacy mode used.
+  - Acceptance: New shape documented, tests updated, legacy path flagged, example scripts adjusted.
+  - Dependencies: None (isolated to article + automation layer + examples + tests).
+2. Image Pipeline MVP (P1 / L)
+  - Scope: Placeholder extraction → prompt build → stub provider → optional local file emit → Markdown replacement.
+  - Providers Phase 1: `local-svg` (placeholder) + design interface for future remote.
+  - Caching: Key = hash(model? + prompt + size).
+  - Failure Policy: Config `onImageError` = keep placeholder | remove | comment.
+  - Acceptance: At least one article run replaces placeholders with `![alt](path)` images; deterministic stub output in tests.
+  - Dependencies: None (touches assembly + new `image/` folder).
+3. Tag Quality Pass (P1 / M)
+  - Steps: normalize → remove generic (denylist) → rank (keyword overlap & frequency) → cap (<=8) → optional validation mini-call (feature flag).
+  - Acceptance: Tag set reduced & stable across reruns with identical outline; test verifying removal of generic entries.
+  - Dependencies: Outline result (post-dedupe) available.
+4. Diagnostics Block (P1 / S)
+  - Add `article.diagnostics` { duplicateRatio, outlineRetryCount, estimationFallbacks, warnings[] }.
+  - Warnings: highDuplicateRatio, missingPricing, usageEstimated, imageFailures (future), partialSections (future).
+  - Acceptance: Present in output JSON; verbose summary prints condensed line.
 
-### Detailed Task Breakdown (Merged From Original README TODO)
-1. Callback Payload Refactor
-  - Wrap generation input parameters under `inputMeta` (topic, keywords, wordCountRange, existingTags, existingCategories, lang, contextStrategy, model, exportModes).
-  - Place generated article object under `result` (current ArticleJSON shape).
-  - Update internal usages (automation layer, tests, `examples/wordpress.ts`).
-  - Migration: dual-mode support via env flag `LEGACY_CALLBACK=1` (one minor version) + deprecation notice.
-  - Add documentation + changelog entry.
+### P2 Resilience & Observability
+5. Partial Continuation (P2 / M)
+  - Behavior: On subsection failure, record placeholder + warning; continue remaining subsections.
+  - Acceptance: Article completes with warnings; diagnostics includes failure count.
+  - Dependencies: Diagnostics block (for warnings list).
+6. Publisher Abstraction (P2 / M)
+  - Interface: `Publisher.publish(ArticleJSON, meta)` returning `{ id, slug }`.
+  - WordPress adapter implements idempotent create-or-skip.
+  - Acceptance: Example script switched to adapter; tests mock interface.
+  - Dependencies: Callback redesign optional (not blocking).
+7. Structured Run Summary (P2 / S)
+  - Emit `run-summary.json` aggregating articles, timings, costs, warnings.
+  - Acceptance: Automation example writes summary file; test ensures schema.
+  - Dependencies: Diagnostics & existing timings.
+8. Adaptive Duplicate Threshold (P2 / S)
+  - Adjust retry decision threshold based on outline section count distribution (e.g. higher tolerance for very short outlines).
+  - Acceptance: Unit test for threshold function given synthetic distributions.
 
-2. Image Generation Pipeline
-  - Extract `[image]...[/image]` placeholders and form prompt context (title + section + subheading + alt).
-  - Providers: start with local stub + hosted (e.g. DALL·E 3 or Replicate SDXL).
-  - Caching: hash(prompt + provider + size) to reuse images.
-  - Optional upload: local filesystem or WordPress media endpoint.
-  - Replacement modes: Markdown (`![alt](url)`) vs HTML `<figure>` block.
-  - Failure handling policy: keep | remove | comment.
+### P3 Expansion / Exploratory
+9. Multi‑Model Pipeline (P3 / M)
+  - Outline with cheaper model, sections with premium.
+  - Acceptance: Configurable via `outlineModel` override; cost attribution split.
+10. Streaming Subsections (P3 / L)
+  - Progressive CLI output while accumulating final body.
+  - Acceptance: Flag `--stream` prints tokens or line chunks; final body identical to non-stream run.
+11. Adaptive Subsection Budgeting (P3 / M)
+  - Adjust target length based on remaining word budget vs sections left.
+  - Acceptance: Word count distribution smoother; test verifying allocation algorithm.
+12. Citation / Source Mode (P3 / L)
+  - Adds inline reference placeholders & reference list section.
+  - Acceptance: Feature-flag generating consistent `[refX]` pattern with final reference block.
 
-3. Tag Quality Improvements
-  - Normalize (lowercase, trim, collapse whitespace).
-  - Filter generic tags (e.g. "technology", "business") unless reinforced by keywords or outline density.
-  - Relevance scoring vs keyword overlap / simple embedding similarity (future optional).
-  - Enforce max tag count (e.g. 8) with ranking heuristic.
-  - Optional validation mini-prompt: yes/no relevance gate.
+### Cross-Cutting (Ongoing)
+13. Test Coverage Hardening (Rolling)
+  - Add malformed outline JSON, pricing missing, partial continuation scenarios.
+  - Target: Critical path error branches have at least one assertion.
+14. Performance Baseline (Rolling)
+  - Track average ms per subsection (outline vs summary vs full) for regression detection.
+15. Documentation Sync (Rolling)
+  - Ensure README + proposal reflect new features at merge time.
 
-4. Diagnostics & Warning Accumulation
-  - Add `article.diagnostics` with: duplicateRatio, outlineRetryCount, estimationFallbacks, warnings[].
-  - Populate warnings for: high duplicates, missing pricing, usage estimation fallback, skipped publish (WordPress), future partial failures.
-  - Surface summary line in verbose mode.
+### Dependency Graph (Simplified)
+```
+Diagnostics → (enables) PartialContinuation, StructuredSummary
+CallbackRedesign → (nice-to-have for) PublisherAbstraction
+ImagePipeline → (independent)
+TagQuality → (independent)
+AdaptiveDuplicateThreshold → (uses) existing outline metrics
+```
+
+### Acceptance Criteria Summary (Key P1 Items)
+- Callback Redesign: All existing tests green with new shape + legacy flag test; docs updated.
+- Image Pipeline MVP: Placeholder in → image link out for at least one block; no crash if zero placeholders.
+- Tag Quality: Generic tag test passes; count limit enforced; optional validation toggle.
+- Diagnostics: Block present; warnings array populated when forcing scenarios (simulate pricing miss, force duplicate ratio).
+
+### Risk / Mitigation
+| Risk | Impact | Mitigation |
+|------|--------|------------|
+| Callback breaking change mishandled | Downstream scripts fail | Dual mode + env flag + clear docs |
+| Image provider latency | Slows pipeline | Stub/local provider first + async batching later |
+| Tag over-filtering | Loss of relevant tags | Minimum floor (e.g. >=3) before pruning |
+| Partial continuation masking issues | Hidden low-quality output | Warnings surfaced in diagnostics & summary |
+
+### Out of Scope (Current Cycle)
+- Full factual verification
+- Human editorial UI
+- Multi-language translation of existing articles
+
+---
 
 ---
 ## 30. Suggestions (Editorial / Structural)

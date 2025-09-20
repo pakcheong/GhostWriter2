@@ -1,38 +1,7 @@
-import { generateTopics, type GenerateTopicsOptions } from '../topics/generate-topics.js';
+import { generateTopics } from '../topics/generate-topics.js';
 import { generateArticle } from '../article/generate-article.js';
-import type { GenerateArticleOptions } from '../types.js';
+import type { AutoGenerateOptions, AutoGenerateResult } from './types.js';
 import type { ArticleJSON } from '../types.js';
-
-export interface AutoGenerateOptions {
-  topics: Omit<GenerateTopicsOptions, 'limit'> & { limit?: number };
-  article: Omit<GenerateArticleOptions, 'topic' | 'keywords'> & { keywords?: string[] };
-  count?: number; // number of top topics; -1 or undefined => all generated topics
-  concurrency?: number; // max concurrent article generations (default 2)
-  // Optional hooks
-  onTopicsResult?: (r: {
-    topics: string[];
-    raw: ReturnType<typeof generateTopics> extends Promise<infer R> ? R : never;
-  }) => void | Promise<void>;
-  onArticle?: (article: ArticleJSON, index: number) => void | Promise<void>;
-  verbose?: boolean;
-}
-
-export interface AutoGenerateResult {
-  topics: string[];
-  articles: ArticleJSON[];
-  timings?: {
-    startTime: number;
-    topicsEndTime: number;
-    endTime: number;
-    totalMs: number;
-    topicsMs: number;
-    articlesMs: number;
-  };
-}
-
-// Exported helper component types for stricter external usage
-export type AutoGenerateTopicsConfig = AutoGenerateOptions['topics'];
-export type AutoGenerateArticleConfig = AutoGenerateOptions['article'];
 
 /**
  * High-level automation: generate topics then generate articles for the top N.

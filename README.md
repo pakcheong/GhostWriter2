@@ -465,6 +465,14 @@ import { generateTopics } from './src/topics/generate-topics.js';
 import { autoGenerateArticlesFromTopics } from './src/automation/auto-generate.js';
 ```
 
+### Type Organization
+Domain option/result interfaces now live beside their feature logic:
+- Article types: `src/article/types.ts` (e.g. `GenerateArticleOptions`)
+- Topics types: `src/topics/types.ts` (e.g. `GenerateTopicsOptions`, `TopicCandidate`)
+- Automation types: `src/automation/types.ts` (e.g. `AutoGenerateOptions`, `AutoGenerateResult`)
+- Shared structural types (article JSON shape, timings, context enums) remain in `src/types.ts`.
+Update imports if you previously consumed `GenerateArticleOptions` from the root shared file.
+
 ---
 ## Roadmap / Potential Enhancements
 - WordPress publishing helper (`publish-to-wp.ts`) for bulk post creation (expects JSON bundle with `items[]`).
@@ -474,7 +482,7 @@ import { autoGenerateArticlesFromTopics } from './src/automation/auto-generate.j
 - More granular quiet vs usage table controls
 - Pluggable scoring for topics
 - Post-generation validation hooks
- 
+
 ---
 
 ## TODO

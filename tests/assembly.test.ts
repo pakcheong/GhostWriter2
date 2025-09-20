@@ -7,10 +7,10 @@ const article = assembleArticle({
     description: 'D',
     slug: 'slug',
     outline: [],
-    tags: ['A','A'],
-    categories: ['c1','c1'],
+    tags: ['A', 'A'],
+    categories: ['c1', 'c1']
   },
-  sections: ['Content one', 'Content two'],
+  sections: ['Content one', 'Content two']
 });
 
 assert.equal(article.body.includes('Content one'), true);

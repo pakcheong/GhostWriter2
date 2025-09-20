@@ -11,8 +11,8 @@ const input: OutlineResult = {
   outline: [
     { heading: 'Introduction to React 19', subheadings: ['Overview', 'Key Features', 'Overview'] },
     { heading: 'Introduction to React 19', subheadings: ['Overview', 'Migration Path'] },
-    { heading: 'Performance', subheadings: ['Overview', 'Server Components', 'Server Components'] },
-  ],
+    { heading: 'Performance', subheadings: ['Overview', 'Server Components', 'Server Components'] }
+  ]
 };
 
 const out = dedupeOutline(input, { verbose: false });

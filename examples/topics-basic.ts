@@ -7,7 +7,7 @@ import { generateTopics } from '../dist/index.js';
     limit: 8,
     lang: 'en',
     verbose: true,
-    printUsage: true,
+    printUsage: true
   });
   console.log('[sample] top topic:', res.topics[0]?.title);
 })();

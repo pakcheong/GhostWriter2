@@ -35,17 +35,40 @@ if (!reachable) {
 
 // Deterministic mock if reachable (we still perform reachability check first)
 __setGenerateTextImpl(async (req: any) => {
-  const content = req.prompt || (req.messages||[]).map((m: any)=>m.content).join('\n');
+  const content = req.prompt || (req.messages || []).map((m: any) => m.content).join('\n');
   if (content.includes('You are a precise SEO writer')) {
-    return { text: 'Body section with [image]local[/image]', usage: { promptTokens:1, completionTokens:2, totalTokens:3 } };
+    return {
+      text: 'Body section with [image]local[/image]',
+      usage: { promptTokens: 1, completionTokens: 2, totalTokens: 3 }
+    };
   }
   if (content.includes('STRICT JSON') || content.includes('"slug"')) {
-    return { text: JSON.stringify({
-      title: 'LM Local Title', description: 'Local description', slug: 'lm-local-title', tags: ['local','perf'], categories: ['ai'], outline: [ { heading: 'Local Intro', subheadings: ['Context','Goal'] } ]
-    }), usage: { promptTokens:2, completionTokens:4, totalTokens:6 }};
+    return {
+      text: JSON.stringify({
+        title: 'LM Local Title',
+        description: 'Local description',
+        slug: 'lm-local-title',
+        tags: ['local', 'perf'],
+        categories: ['ai'],
+        outline: [{ heading: 'Local Intro', subheadings: ['Context', 'Goal'] }]
+      }),
+      usage: { promptTokens: 2, completionTokens: 4, totalTokens: 6 }
+    };
   }
-  return { text: 'Generic body', usage: { promptTokens:1, completionTokens:1, totalTokens:2 } };
+  return { text: 'Generic body', usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 } };
 });
-const { article } = await generateArticle({ model: 'openai/gpt-oss-20b', topic: 'Local LLM Performance', keywords: ['local','performance'], minWords: 50, maxWords: 80, existingTags: ['local'], existingCategories: ['ai'], lang: 'en', exportModes: [], writeFiles: false, verbose: false });
+const { article } = await generateArticle({
+  model: 'openai/gpt-oss-20b',
+  topic: 'Local LLM Performance',
+  keywords: ['local', 'performance'],
+  minWords: 50,
+  maxWords: 80,
+  existingTags: ['local'],
+  existingCategories: ['ai'],
+  lang: 'en',
+  exportModes: [],
+  writeFiles: false,
+  verbose: false
+});
 assert.equal(article.title, 'LM Local Title');
 console.log('lmstudio.test.ts passed');

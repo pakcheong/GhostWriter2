@@ -51,7 +51,7 @@ export function buildSectionPrompt(opts: {
   return [
     `Write the body for subsection: "${subheading}" (parent: "${section.heading}") in ${lang}.`,
     `Global topic: ${topic}`,
-    `Sibling subheadings: ${section.subheadings.filter(h => h !== subheading).join(' | ') || '(none)'}`,
+    `Sibling subheadings: ${section.subheadings.filter((h) => h !== subheading).join(' | ') || '(none)'}`,
     `Keywords (natural use): ${keywords.join(', ') || '(none)'}`,
     `Style: ${styleNotes || 'authoritative, practical, neutral, SEO-aware'}`,
     'Constraints:',
@@ -60,7 +60,7 @@ export function buildSectionPrompt(opts: {
     '- Exactly one [image]alt text[/image] placeholder.',
     '- Use **bold** sparingly.',
     '- No restating heading/subheading.',
-    '- No filler closings.',
+    '- No filler closings.'
   ].join('\n');
 }
 
@@ -70,6 +70,6 @@ export function buildSummaryPrompt(sectionText: string, lang: string): string {
     'Each bullet <= 22 words, no repetition.',
     'No intro/conclusion line.',
     'Source section:',
-    sectionText,
+    sectionText
   ].join('\n');
 }

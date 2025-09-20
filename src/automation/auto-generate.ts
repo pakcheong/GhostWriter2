@@ -9,7 +9,10 @@ export interface AutoGenerateOptions {
   count?: number; // number of top topics; -1 or undefined => all generated topics
   concurrency?: number; // max concurrent article generations (default 2)
   // Optional hooks
-  onTopicsResult?: (r: { topics: string[]; raw: ReturnType<typeof generateTopics> extends Promise<infer R> ? R : never }) => void | Promise<void>;
+  onTopicsResult?: (r: {
+    topics: string[];
+    raw: ReturnType<typeof generateTopics> extends Promise<infer R> ? R : never;
+  }) => void | Promise<void>;
   onArticle?: (article: ArticleJSON, index: number) => void | Promise<void>;
   verbose?: boolean;
 }
@@ -27,45 +30,73 @@ export interface AutoGenerateResult {
   };
 }
 
+// Exported helper component types for stricter external usage
+export type AutoGenerateTopicsConfig = AutoGenerateOptions['topics'];
+export type AutoGenerateArticleConfig = AutoGenerateOptions['article'];
+
 /**
  * High-level automation: generate topics then generate articles for the top N.
  */
-export async function autoGenerateArticlesFromTopics(options: AutoGenerateOptions): Promise<AutoGenerateResult> {
+export async function autoGenerateArticlesFromTopics(
+  options: AutoGenerateOptions
+): Promise<AutoGenerateResult> {
   // Interpret count: -1 or undefined => use all topics after generation
   const rawCount = options.count;
   const verbose = options.verbose;
   const startTime = Date.now();
   // Determine a provisional topic generation limit. If count is unknown/all, keep user provided limit or fallback to 10.
-  const topicLimit = options.topics.limit ?? (typeof rawCount === 'number' && rawCount > 0 ? Math.max(rawCount * 2, 6) : 10);
-  const topicsResult = await generateTopics({ ...options.topics, limit: topicLimit, verbose: options.topics.verbose ?? verbose });
+  const topicLimit =
+    options.topics.limit ?? (typeof rawCount === 'number' && rawCount > 0 ? Math.max(rawCount * 2, 6) : 10);
+  const topicsResult = await generateTopics({
+    ...options.topics,
+    limit: topicLimit,
+    verbose: options.topics.verbose ?? verbose
+  });
   const topicsEndTime = Date.now();
-  const topicTitles = topicsResult.topics.map(t => t.title);
-  const desiredCount = (rawCount == null || rawCount === -1) ? topicTitles.length : Math.min(rawCount, topicTitles.length);
+  const topicTitles = topicsResult.topics.map((t) => t.title);
+  const desiredCount =
+    rawCount == null || rawCount === -1 ? topicTitles.length : Math.min(rawCount, topicTitles.length);
   const picked = topicTitles.slice(0, desiredCount);
   if (options.onTopicsResult) {
-    try { await options.onTopicsResult({ topics: topicTitles, raw: topicsResult }); } catch (err) { if (verbose) console.warn('[automation] onTopicsResult error', err); }
+    try {
+      await options.onTopicsResult({ topics: topicTitles, raw: topicsResult });
+    } catch (err) {
+      if (verbose) console.warn('[automation] onTopicsResult error', err);
+    }
   }
   const articles: ArticleJSON[] = new Array(picked.length);
   const concurrency = Math.max(1, options.concurrency ?? 2);
-  if (verbose) console.log(`[automation] starting article generation count=${picked.length} concurrency=${concurrency}`);
+  if (verbose)
+    console.log(`[automation] starting article generation count=${picked.length} concurrency=${concurrency}`);
   let currentIndex = 0;
   const worker = async () => {
     while (true) {
       const i = currentIndex++;
       if (i >= picked.length) return;
       const title = picked[i];
-      if (verbose) console.log(`[automation] worker generating index=${i+1} title="${title}"`);
+      if (verbose) console.log(`[automation] worker generating index=${i + 1} title="${title}"`);
       try {
         const { article } = await generateArticle({
           ...(options.article as any),
           topic: title,
-            keywords: options.article.keywords && options.article.keywords.length ? options.article.keywords : title.split(/\s+/).slice(0,5),
+          keywords:
+            options.article.keywords && options.article.keywords.length
+              ? options.article.keywords
+              : title.split(/\s+/).slice(0, 5),
           onArticle: async (a) => {
             if (options.article.onArticle) {
-              try { await (options.article as any).onArticle(a); } catch (err) { if (verbose) console.warn('[automation] inner onArticle error', err); }
+              try {
+                await (options.article as any).onArticle(a);
+              } catch (err) {
+                if (verbose) console.warn('[automation] inner onArticle error', err);
+              }
             }
             if (options.onArticle) {
-              try { await options.onArticle(a, i); } catch (err) { if (verbose) console.warn('[automation] onArticle hook error', err); }
+              try {
+                await options.onArticle(a, i);
+              } catch (err) {
+                if (verbose) console.warn('[automation] onArticle hook error', err);
+              }
             }
           }
         });
@@ -94,5 +125,9 @@ export async function autoGenerateArticlesFromTopics(options: AutoGenerateOption
     console.log(`  Articles     : ${fmt(articlesMs)} (concurrency=${concurrency})`);
     console.log(`  Total        : ${fmt(totalMs)}`);
   }
-  return { topics: topicTitles, articles, timings: { startTime, topicsEndTime, endTime, totalMs, topicsMs, articlesMs } };
+  return {
+    topics: topicTitles,
+    articles,
+    timings: { startTime, topicsEndTime, endTime, totalMs, topicsMs, articlesMs }
+  };
 }

@@ -1,4 +1,8 @@
-import { autoGenerateArticlesFromTopics, __setTopicsGenerateTextImpl, __setGenerateTextImpl } from '../index.js';
+import {
+  autoGenerateArticlesFromTopics,
+  __setTopicsGenerateTextImpl,
+  __setGenerateTextImpl
+} from '../index.js';
 
 // Mock topics with 4 entries
 const mockTopics = `[
@@ -8,19 +12,21 @@ const mockTopics = `[
   {"title":"Delta","confidence":0.6,"riskFlags":[]}
 ]`;
 
-__setTopicsGenerateTextImpl(async () => ({ text: mockTopics } as any));
+__setTopicsGenerateTextImpl(async () => ({ text: mockTopics }) as any);
 __setGenerateTextImpl(async ({ prompt }: any) => {
   const match = /Alpha|Beta|Gamma|Delta/.exec(prompt);
   const title = match ? match[0] : 'Unknown';
   return { text: `# ${title}\ncontent` } as any;
 });
 
-function assert(c: any, m: string) { if (!c) throw new Error(m); }
+function assert(c: any, m: string) {
+  if (!c) throw new Error(m);
+}
 
 (async () => {
   const resAllImplicit = await autoGenerateArticlesFromTopics({
     topics: { domain: 'x' },
-    article: { exportModes: ['json'] } as any,
+    article: { exportModes: ['json'] } as any
     // count omitted -> all
   });
   assert(resAllImplicit.articles.length === 4, 'implicit all failed');
@@ -28,7 +34,7 @@ function assert(c: any, m: string) { if (!c) throw new Error(m); }
   const resAllExplicit = await autoGenerateArticlesFromTopics({
     topics: { domain: 'x' },
     article: { exportModes: ['json'] } as any,
-    count: -1,
+    count: -1
   });
   assert(resAllExplicit.articles.length === 4, 'explicit -1 all failed');
   console.log('automation-count-all.test.ts passed');

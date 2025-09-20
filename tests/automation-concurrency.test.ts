@@ -1,4 +1,8 @@
-import { autoGenerateArticlesFromTopics, __setTopicsGenerateTextImpl, __setGenerateTextImpl } from '../index.js';
+import {
+  autoGenerateArticlesFromTopics,
+  __setTopicsGenerateTextImpl,
+  __setGenerateTextImpl
+} from '../index.js';
 
 // Mock topics output (5 topics)
 const mockTopics = `[
@@ -10,17 +14,19 @@ const mockTopics = `[
 ]`;
 
 // Provide deterministic topics
-__setTopicsGenerateTextImpl(async () => ({ text: mockTopics } as any));
+__setTopicsGenerateTextImpl(async () => ({ text: mockTopics }) as any);
 
 // Mock article generation: return minimal structure consistent with ArticleJSON expectation.
 __setGenerateTextImpl(async ({ prompt }: any) => {
   // Derive title from prompt (last quoted part or first line fallback)
   const m = String(prompt).match(/"([^"]+)"/) || String(prompt).match(/Topic [A-E]/);
-  const title = m ? (m[1] || m[0]) : 'Untitled';
+  const title = m ? m[1] || m[0] : 'Untitled';
   return { text: `# ${title}\n\nBody for ${title}` } as any;
 });
 
-function assert(cond: any, msg: string) { if (!cond) throw new Error(msg); }
+function assert(cond: any, msg: string) {
+  if (!cond) throw new Error(msg);
+}
 
 (async () => {
   const res = await autoGenerateArticlesFromTopics({
@@ -28,11 +34,11 @@ function assert(cond: any, msg: string) { if (!cond) throw new Error(msg); }
     article: { exportMode: 'markdown' } as any,
     count: 5,
     concurrency: 3,
-    verbose: false,
+    verbose: false
   });
   // Verify ordering preserved (topics list order BLAH A->E) and articles length
-  const expected = ['Topic A','Topic B','Topic C','Topic D','Topic E'];
-  assert(JSON.stringify(res.topics.slice(0,5)) === JSON.stringify(expected), 'Topics ordering changed');
+  const expected = ['Topic A', 'Topic B', 'Topic C', 'Topic D', 'Topic E'];
+  assert(JSON.stringify(res.topics.slice(0, 5)) === JSON.stringify(expected), 'Topics ordering changed');
   assert(res.articles.length === 5, 'Articles count mismatch');
   assert(res.timings && typeof res.timings.totalMs === 'number', 'Timings missing');
   console.log('automation-concurrency.test.ts passed');

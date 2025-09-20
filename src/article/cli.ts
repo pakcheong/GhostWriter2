@@ -10,7 +10,10 @@ function parseExportModes(raw?: string): ExportMode[] {
   if (!raw) return ['json'];
   const lower = raw.toLowerCase().trim();
   if (lower === 'all') return ['json', 'html', 'md'];
-  const parts = lower.split(',').map((s) => s.trim()).filter(Boolean);
+  const parts = lower
+    .split(',')
+    .map((s: string) => s.trim())
+    .filter(Boolean);
   const allowed: ExportMode[] = [];
   for (const p of parts) {
     if (p === 'json' || p === 'html' || p === 'md') {
@@ -24,7 +27,8 @@ const isMain = import.meta.url === pathToFileURL(process.argv[1]).href;
 if (isMain) {
   (async () => {
     if (process.argv.includes('--help') || process.argv.includes('-h')) {
-      const help = 'ghostwriter article generator (moved to src/article/cli.ts)\n\n' +
+      const help =
+        'ghostwriter article generator (moved to src/article/cli.ts)\n\n' +
         'Usage: ghostwriter [options]\n\n' +
         'Options:\n' +
         '  --model <model>                  Model id (env fallback)\n' +
@@ -73,9 +77,18 @@ if (isMain) {
     const verboseFlag = process.argv.includes('--verbose');
     const verbose = verboseFlag ? true : quietFlag ? false : true;
 
-    const keywords = keywordsStr.split(',').map((s) => s.trim()).filter(Boolean);
-    const existingTags = tagsStr.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
-    const existingCategories = categoriesStr.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
+    const keywords = keywordsStr
+      .split(',')
+      .map((s: string) => s.trim())
+      .filter(Boolean);
+    const existingTags = tagsStr
+      .split(',')
+      .map((s: string) => s.trim().toLowerCase())
+      .filter(Boolean);
+    const existingCategories = categoriesStr
+      .split(',')
+      .map((s: string) => s.trim().toLowerCase())
+      .filter(Boolean);
 
     await generateArticle({
       model: modelArg,
@@ -97,7 +110,7 @@ if (isMain) {
       // printUsage intentionally not exposed via separate flags to match GenerateArticleOptions exactly
       singleRunTimestamp,
       namePattern,
-      verbose,
+      verbose
     });
   })().catch((err) => {
     console.error(err?.message || err);

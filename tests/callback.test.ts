@@ -39,11 +39,14 @@ await generateArticle({
   exportModes: [],
   writeFiles: false,
   verbose: false,
-  onArticle: (a: any) => { captured = a; }
+  onArticle: (a: any) => {
+    captured = a;
+  }
 });
 
 if (!captured) throw new Error('onArticle not invoked');
 if (captured.provider) throw new Error('provider field should be removed');
 if (!captured.timings) throw new Error('timings missing');
-if (!Array.isArray(captured.sectionTimings) || captured.sectionTimings.length !== 2) throw new Error('sectionTimings mismatch');
+if (!Array.isArray(captured.sectionTimings) || captured.sectionTimings.length !== 2)
+  throw new Error('sectionTimings mismatch');
 if (captured.status !== 'success') throw new Error('status unexpected');

@@ -182,8 +182,8 @@ function logArticle(prefix: string, a: any) {
       count: -1,
       concurrency: 3,
       verbose: true,
-      onTopicsResult: (t: any) => console.log('[automation] topics:', t.topics.slice(0,5).join(' | ')),
-      onArticle: (a: any, idx: number) => console.log(`[automation] article ${idx+1} title:`, a.title)
+      onTopicsResult: (t: any) => console.log('[automation] topics:', t.topics.slice(0, 5).join(' | ')),
+      onArticle: (a: any, idx: number) => console.log(`[automation] article ${idx + 1} title:`, a.title)
     });
     console.log(result.timings);
     console.log('[automation] generated articles:', result.articles.length);

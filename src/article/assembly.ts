@@ -10,7 +10,7 @@ export function assembleArticle(params: { meta: OutlineResult; sections: string[
     body: params.sections.map(sanitizeMarkdown).join('\n\n'),
     tags: Array.from(new Set(params.meta.tags || [])),
     categories: Array.from(new Set(params.meta.categories || [])),
-    slug: params.meta.slug,
+    slug: params.meta.slug
   };
 }
 

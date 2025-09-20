@@ -7,7 +7,7 @@ const outline = buildOutlinePrompt({
   wordCountRange: [500, 800],
   existingTags: ['dev'],
   existingCategories: ['tech'],
-  lang: 'en',
+  lang: 'en'
 });
 assert.ok(outline.includes('Test Topic'));
 assert.ok(outline.includes('alpha'));
@@ -18,7 +18,7 @@ const section = buildSectionPrompt({
   styleNotes: 'concise',
   section: { heading: 'Intro', subheadings: ['Overview'] },
   subheading: 'Overview',
-  lang: 'en',
+  lang: 'en'
 });
 assert.ok(!section.includes('## Intro'), 'Section prompt should not contain the H2 heading now');
 assert.ok(section.includes('Overview'), 'Section prompt must reference the subheading text');

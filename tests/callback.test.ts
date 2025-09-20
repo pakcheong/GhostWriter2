@@ -1,5 +1,5 @@
-import { generateArticle } from '../dist/index.js';
-import { __setGenerateTextImpl } from '../dist/src/generate-article.js';
+import { generateArticle } from '../src/article/generate-article.js';
+import { __setGenerateTextImpl } from '../src/article/generate-article.js';
 
 __setGenerateTextImpl(async (args: any) => {
   const prompt = args.prompt || JSON.stringify(args.messages);
@@ -39,14 +39,26 @@ await generateArticle({
   exportModes: [],
   writeFiles: false,
   verbose: false,
-  onArticle: (a: any) => {
-    captured = a;
+  onArticle: (p: any) => {
+    captured = p;
   }
 });
 
 if (!captured) throw new Error('onArticle not invoked');
-if (captured.provider) throw new Error('provider field should be removed');
-if (!captured.timings) throw new Error('timings missing');
-if (!Array.isArray(captured.sectionTimings) || captured.sectionTimings.length !== 2)
+const art = captured.output || captured; // forward/back compatibility
+if (art.provider) throw new Error('provider field should be removed');
+if (!art.timings) throw new Error('timings missing');
+if (!Array.isArray(art.sectionTimings) || art.sectionTimings.length !== 2)
   throw new Error('sectionTimings mismatch');
-if (captured.status !== 'success') throw new Error('status unexpected');
+if (art.status !== 'success') throw new Error('status unexpected');
+
+// New wrapper assertions
+if (!captured.input) throw new Error('input block missing');
+if (captured.input.topic !== 'Test') throw new Error('input.topic mismatch');
+if (captured.input.modelResolved !== 'gpt-4o-mini') throw new Error('modelResolved mismatch');
+if (!captured.meta) throw new Error('meta block missing');
+if (typeof captured.meta.runTimestamp !== 'number') throw new Error('meta.runTimestamp missing');
+if (captured.meta.sectionCount !== 2) throw new Error('meta.sectionCount mismatch');
+if (typeof captured.meta.timingsSummary.totalMs !== 'number')
+  throw new Error('timingsSummary.totalMs missing');
+console.log('callback.test.ts passed');

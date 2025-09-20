@@ -306,98 +306,70 @@ LMSTUDIO_API_KEY=optional
 ```
 If `LMSTUDIO_API_KEY` is not set a placeholder key is used (LM Studio usually does not require one locally).
 
-### Testing Philosophy
-Deterministic tests use a mock `__setGenerateTextImpl` to avoid network calls and assert:
-- JSON shape (no `provider`, includes `timings`, `sectionTimings`, `status`).
-- Callback invocation (`onArticle`).
-- Pricing & usage aggregation.
+### Testing & Mock Server Policy
+All tests run without real network calls. A unified mock layer provides:
+| Capability | Description |
+|------------|-------------|
+| Deterministic outline/sections | Fixed outline (Intro/Body) & stable subsection Markdown |
+| Summaries | Static short summary string when requested |
+| Topics | Deterministic `Mock Topic N` items (configurable count) |
+| Provider fetch interception | Intercepts any `/chat/completions` request (Deepseek, LM Studio, future) |
+| Strict isolation | Any unexpected external `fetch` triggers an error |
 
-#### Mocking Helpers
-For broader test coverage without real API calls use:
+Usage:
 ```ts
-import { installGhostwriterMocks, resetGhostwriterMocks } from './src/testing/mocks.js';
-installGhostwriterMocks({ topicsCount: 3 });
-// run generateTopics / generateArticle calls
+import { installGhostwriterMocks, resetGhostwriterMocks } from '../src/testing/mocks.ts';
+installGhostwriterMocks({ topicsCount: 4, providerFetch: true });
+// ...call generateTopics / generateArticle / autoGenerateArticlesFromTopics
 resetGhostwriterMocks();
 ```
-Behavior:
-- Topics: returns deterministic `Mock Topic N` items.
-- Articles: fixed outline (Intro/Body) and simple subsection content with placeholder image tag.
-- Summaries: short static string.
-Token usage values are stubbed but structurally valid for cost aggregation tests.
+Multi‑model tests exercise OpenAI (`gpt-4o-mini`), Deepseek (`deepseek-chat`), and LM Studio (`openai/gpt-oss-20b`) code paths entirely under mocks.
 
-### Callback
-`onArticle?: (article: ArticleJSON) => void | Promise<void>` fires after the article object (with timings/status) is built and before function returns. Use it for streaming, additional persistence, or custom logging.
+When adding a new provider: extend the fetch mock or supply a provider‑specific branch returning a deterministic response; never allow silent live calls in unit tests.
 
-Example callback payload (annotated):
+### Callback (Wrapped Payload)
+`onArticle?: (payload: { output: ArticleJSON; input: {...}; meta: {...} }) => void | Promise<void>`
 
+The JSON export now contains this wrapper. Example (abridged):
 ```jsonc
 {
-  "title": "React 19: Key Changes Impacting Production Apps", // Article title generated in outline phase
-  "description": "Explore significant updates in React 19 and their implications...", // Short SEO meta description
-  "body": "## Introduction\n...", // Complete Markdown body (sections + subheadings)
-  "tags": ["react", "frontend", "release"], // Final tag set (normalized & deduped)
-  "categories": ["technology", "web"], // Final category set
-  "slug": "react-19-key-changes-impacting-production-apps", // URL/file-safe slug derived from title
-  "model": "gpt-4o-mini", // Model id used (provider inferred internally)
-  "status": "success", // 'success' | 'warning' (warning when duplicate outline ratio > 20%)
-  "timings": {
-    "totalMs": 8421, // End-to-end runtime including export phase
-    "outlineMs": 612, // Time to generate (and possibly retry) outline
-    "assembleMs": 15, // Time to assemble article object & aggregate metrics
-    "exportMs": 58, // Time writing non-JSON exports
-    "outlineAttempts": 1, // Number of outline generations (max 2 when duplication high)
-    "startTime": 1758267800123, // Epoch ms when run started
-    "endTime": 1758267808544 // Epoch ms when run finished
+  "output": { "title": "Edge Caching Strategies in 2025", "status": "success", "usage": { /* ... */ } },
+  "input": {
+    "topic": "Edge Caching Strategies in 2025",
+    "keywords": ["cdn","cache-control"],
+    "minWords": 1000,
+    "maxWords": 1400,
+    "lang": "en",
+    "contextStrategy": "summary",
+    "exportModes": ["json","md"],
+    "modelRequested": "gpt-4o-mini",
+    "modelResolved": "gpt-4o-mini",
+    "existingTags": ["performance"],
+    "writeFiles": true
   },
-  "sectionTimings": [
-    {
-      "heading": "Introduction", // Section H2 heading
-      "subheadingCount": 3, // Number of subheadings expanded under this section
-      "ms": 1120, // Total ms for all subheadings (+ summary if generated)
-      "subTimings": [ // Per-subheading generation durations
-        { "title": "Why React 19 Matters", "ms": 340 },
-        { "title": "Release Cadence Changes", "ms": 392 },
-        { "title": "Ecosystem Impact", "ms": 388 }
-      ],
-      "summaryMs": 74 // Present only when contextStrategy === 'summary'
-    }
-    // ...additional sections
-  ],
-  "usage": {
-    "outline": { "promptTokens": 620, "completionTokens": 210, "totalTokens": 830 }, // Outline phase usage
-    "sections": { "promptTokens": 4820, "completionTokens": 3980, "totalTokens": 8800 }, // Aggregate of all subsection calls
-    "summaries": { "promptTokens": 320, "completionTokens": 180, "totalTokens": 500 }, // Present only for summary strategy
-    "total": { "promptTokens": 5760, "completionTokens": 4370, "totalTokens": 10130 } // Sum of all phases
-  },
-  "cost": { // Present only if pricing resolved
-    "outline": 0.0042, // USD estimate for outline
-    "sections": 0.0584, // USD estimate for sections
-    "summaries": 0.0031, // USD estimate for summaries (if any)
-    "total": 0.0657, // Sum of available phase costs
-    "priceInPerK": 0.0003, // Input token price ($ per 1K)
-    "priceOutPerK": 0.0006 // Output token price ($ per 1K)
+  "meta": {
+    "runTimestamp": 1758267800123,
+    "baseName": "edge-caching-strategies-in-2025",
+    "outlineAttempts": 1,
+    "duplicateRatio": 0.0,
+    "provider": "openai",
+    "pricingResolved": { "inPerK": 0.0003, "outPerK": 0.0006, "found": true },
+    "timingsSummary": { "totalMs": 8421, "outlineMs": 612, "sectionsMs": 7210, "assembleMs": 15, "exportMs": 58 },
+    "sectionCount": 5,
+    "subheadingTotal": 17,
+    "contextStrategyEffective": "summary",
+    "warning": false
   }
 }
 ```
-
-Field reference summary:
-- title: Generated main article title.
-- description: Short SEO description.
-- body: Full Markdown content.
-- tags / categories: Final normalized lists.
-- slug: Safe identifier used for filenames.
-- model: Model id (provider not exposed separately).
-- status: Quality flag (duplicate outline ratio > threshold => warning).
-- timings: Aggregate phase durations + run boundaries.
-- sectionTimings: Per section timing + per-subheading breakdown.
-- usage: Token counts per phase (prompt/completion/total) + aggregate.
-- cost: Phase cost estimates & pricing (may be absent if pricing unknown).
-- outlineMs / assembleMs / exportMs: Individual timing components inside timings.
-- outlineAttempts: Outline retry count (max 2).
-- startTime / endTime: Wall-clock epoch ms boundaries of the run.
-- subTimings: Fine-grained per-subheading durations.
-- summaryMs: Time spent generating a section summary (only in summary strategy).
+Backward compatibility helper:
+```ts
+function onArticle(p: any) {
+  const article: any = p.output || p; // legacy support
+  console.log(article.title);
+}
+```
+`input` captures the sanitized generation parameters used. `meta` adds runtime diagnostics not already inside `output` (timings roll‑up, pricing resolution, duplication ratio, section/subheading counts, provider).
 
 ### Timings & Status
 `article.timings` includes `outlineMs`, `assembleMs`, `exportMs`, `totalMs`, `outlineAttempts`.

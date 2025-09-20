@@ -52,17 +52,18 @@ export async function autoGenerateArticlesFromTopics(
             options.article.keywords && options.article.keywords.length
               ? options.article.keywords
               : title.split(/\s+/).slice(0, 5),
-          onArticle: async (a) => {
+          onArticle: async (payload) => {
+            const articleObj = (payload as any).output || payload; // forward/back compat
             if (options.article.onArticle) {
               try {
-                await (options.article as any).onArticle(a);
+                await (options.article as any).onArticle(payload);
               } catch (err) {
                 if (verbose) console.warn('[automation] inner onArticle error', err);
               }
             }
             if (options.onArticle) {
               try {
-                await options.onArticle(a, i);
+                await options.onArticle(articleObj, i);
               } catch (err) {
                 if (verbose) console.warn('[automation] onArticle hook error', err);
               }

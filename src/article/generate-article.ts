@@ -22,7 +22,7 @@ import type {
   SubTiming,
   ArticleTimings
 } from '../types.js';
-import type { GenerateArticleOptions } from './types.js';
+import type { GenerateArticleOptions, GenerateArticleCallbackPayload } from './types.js';
 import { buildOutlinePrompt, buildSectionPrompt, buildSummaryPrompt } from './prompts.js';
 import { getClientForProvider } from '../model-config.js';
 import { extractUsage } from '../usage.js';
@@ -370,15 +370,65 @@ export async function generateArticle(
     },
     cost: costs
   } as ArticleJSON;
+  // Build callback/input/meta wrapper
+  const sectionsMs = sectionTimings.reduce((acc, s) => acc + s.ms, 0);
+  const inputPayload = {
+    topic,
+    keywords,
+    minWords,
+    maxWords,
+    styleNotes,
+    lang,
+    contextStrategy,
+    exportModes,
+    modelRequested: modelInput,
+    modelResolved: model,
+    priceInPerK: priceInPerK,
+    priceOutPerK: priceOutPerK,
+    existingTags: existingTags.length ? existingTags : undefined,
+    existingCategories: existingCategories.length ? existingCategories : undefined,
+    namePattern,
+    outBaseName,
+    writeFiles,
+    verbose: verbose || undefined
+  };
+  const metaPayload = {
+    runTimestamp: runTs,
+    baseName,
+    outlineAttempts,
+    duplicateRatio,
+    provider,
+    pricingResolved: {
+      inPerK: priceIn ?? undefined,
+      outPerK: priceOut ?? undefined,
+      found: resolvedPrices.found
+    },
+    timingsSummary: {
+      totalMs,
+      outlineMs: outlineMs!,
+      sectionsMs,
+      assembleMs,
+      exportMs
+    },
+    sectionCount: sectionTimings.length,
+    subheadingTotal: sectionTimings.reduce((a, s) => a + (s.subheadingCount || 0), 0),
+    contextStrategyEffective: contextStrategy,
+    warning: status === 'warning'
+  };
+  const wrappedPayload: GenerateArticleCallbackPayload = {
+    output: articleJSON,
+    input: inputPayload,
+    meta: metaPayload
+  };
   if (writeFiles && exportModes.includes('json')) {
     const jsonPath = uniquePath(outDir, baseName, 'json', runTs);
-    fs.writeFileSync(jsonPath, JSON.stringify(articleJSON, null, 2), 'utf-8');
+    fs.writeFileSync(jsonPath, JSON.stringify(wrappedPayload, null, 2), 'utf-8');
     files.json = jsonPath;
     if (verbose) console.log(`JSON saved to ${jsonPath}`);
   }
   if (typeof options.onArticle === 'function') {
     try {
-      await options.onArticle(articleJSON);
+      await options.onArticle(wrappedPayload);
     } catch (err) {
       if (verbose) console.warn('[onArticle] callback error:', err);
     }

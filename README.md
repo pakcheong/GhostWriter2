@@ -312,6 +312,20 @@ Deterministic tests use a mock `__setGenerateTextImpl` to avoid network calls an
 - Callback invocation (`onArticle`).
 - Pricing & usage aggregation.
 
+#### Mocking Helpers
+For broader test coverage without real API calls use:
+```ts
+import { installGhostwriterMocks, resetGhostwriterMocks } from './src/testing/mocks.js';
+installGhostwriterMocks({ topicsCount: 3 });
+// run generateTopics / generateArticle calls
+resetGhostwriterMocks();
+```
+Behavior:
+- Topics: returns deterministic `Mock Topic N` items.
+- Articles: fixed outline (Intro/Body) and simple subsection content with placeholder image tag.
+- Summaries: short static string.
+Token usage values are stubbed but structurally valid for cost aggregation tests.
+
 ### Callback
 `onArticle?: (article: ArticleJSON) => void | Promise<void>` fires after the article object (with timings/status) is built and before function returns. Use it for streaming, additional persistence, or custom logging.
 

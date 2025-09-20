@@ -1,4 +1,5 @@
 import { generateArticle } from '../dist/index.js';
+import { type GenerateArticleCallbackPayload } from '../src/article/types.js';
 import { logArticle } from './util.js';
 
 async function isLmStudioReachable(base?: string) {
@@ -36,7 +37,7 @@ async function isLmStudioReachable(base?: string) {
     exportModes: ['json'],
     writeFiles: false,
     verbose: true,
-    onArticle(a: any) {
+    onArticle(a: GenerateArticleCallbackPayload) {
       logArticle('lmstudio', a);
     }
   });

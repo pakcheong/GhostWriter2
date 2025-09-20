@@ -22,7 +22,12 @@ import type {
   SubTiming,
   ArticleTimings
 } from '../types.js';
-import type { GenerateArticleOptions, GenerateArticleCallbackPayload } from './types.js';
+import type {
+  GenerateArticleOptions,
+  GenerateArticleCallbackPayload,
+  ArticleContent,
+  ArticleRuntime
+} from './types.js';
 import { buildOutlinePrompt, buildSectionPrompt, buildSummaryPrompt } from './prompts.js';
 import { getClientForProvider } from '../model-config.js';
 import { extractUsage } from '../usage.js';
@@ -231,11 +236,18 @@ export async function generateArticle(
   const sectionBlocks: string[] = [];
   const sectionSummaries: string[] = [];
   const sectionTimings: SectionTiming[] = [];
+  const timingsSectionsBreakdown: ArticleRuntime['timings']['sectionsBreakdown'] = [];
+  const usageSectionsBreakdown: ArticleRuntime['usage']['sectionsBreakdown'] = [];
   for (let i = 0; i < outline.outline.length; i++) {
     const sec = outline.outline[i];
     const secStart = Date.now();
     const subBlocks: string[] = [];
     const subTimings: SubTiming[] = [];
+    const subDetails: {
+      title: string;
+      ms: number;
+      tokens: { prompt: number; completion: number; total: number };
+    }[] = [];
     for (const sh of sec.subheadings) {
       const subStart = Date.now();
       const { text, usage } = await generateSubsectionMarkdownInternal({
@@ -259,16 +271,36 @@ export async function generateArticle(
       subBlocks.push(cleaned.trim());
       subTimings.push({ title: sh, ms: subMs });
       sectionsUsage = addUsage(sectionsUsage, usage);
+      subDetails.push({
+        title: sh,
+        ms: subMs,
+        tokens: {
+          prompt: usage.promptTokens,
+          completion: usage.completionTokens,
+          total: usage.totalTokens
+        }
+      });
     }
     const sectionText = ['## ' + sec.heading, ...subBlocks].join('\n\n');
     sectionBlocks.push(sectionText);
     let summaryMs: number | undefined;
+    let sectionSummaryDetail:
+      | { ms: number; tokens: { prompt: number; completion: number; total: number } }
+      | undefined;
     if (contextStrategy === 'summary') {
       const sumStart = Date.now();
       const { text: sumText, usage } = await generateSummaryInternal({ model, sectionText, lang, verbose });
       summaryMs = Date.now() - sumStart;
       sectionSummaries.push(sumText);
       summaryUsage = addUsage(summaryUsage, usage);
+      sectionSummaryDetail = {
+        ms: summaryMs,
+        tokens: {
+          prompt: usage.promptTokens,
+          completion: usage.completionTokens,
+          total: usage.totalTokens
+        }
+      };
     }
     const secMs = Date.now() - secStart;
     sectionTimings.push({
@@ -277,6 +309,23 @@ export async function generateArticle(
       ms: secMs,
       subTimings,
       summaryMs
+    });
+    const secPromptTokens = subDetails.reduce((a, d) => a + d.tokens.prompt, 0);
+    const secCompletionTokens = subDetails.reduce((a, d) => a + d.tokens.completion, 0);
+    const secTotalTokens =
+      subDetails.reduce((a, d) => a + d.tokens.total, 0) +
+      (sectionSummaryDetail ? sectionSummaryDetail.tokens.total : 0);
+    timingsSectionsBreakdown.push({
+      heading: sec.heading,
+      ms: secMs,
+      subheadings: subTimings.map((t) => ({ title: t.title, ms: t.ms })),
+      summary: sectionSummaryDetail ? { ms: sectionSummaryDetail.ms } : undefined
+    });
+    usageSectionsBreakdown.push({
+      heading: sec.heading,
+      tokens: { prompt: secPromptTokens, completion: secCompletionTokens, total: secTotalTokens },
+      subheadings: subDetails.map((d) => ({ title: d.title, tokens: d.tokens })),
+      summary: sectionSummaryDetail ? { tokens: { ...sectionSummaryDetail.tokens } } : undefined
     });
   }
   const assembleStart = Date.now();
@@ -369,7 +418,7 @@ export async function generateArticle(
       total: totalUsage
     },
     cost: costs
-  } as ArticleJSON;
+  } as ArticleJSON; // kept internally for backward compatibility
   // Build callback/input/meta wrapper
   const sectionsMs = sectionTimings.reduce((acc, s) => acc + s.ms, 0);
   const inputPayload = {
@@ -392,33 +441,59 @@ export async function generateArticle(
     writeFiles,
     verbose: verbose || undefined
   };
-  const metaPayload = {
+  // Build merged content + runtime
+  const content: ArticleContent = {
+    title: baseArticle.title,
+    description: baseArticle.description,
+    body: baseArticle.body,
+    slug: baseArticle.slug,
+    tags: baseArticle.tags,
+    categories: baseArticle.categories
+  };
+  const runtime: ArticleRuntime = {
     runTimestamp: runTs,
     baseName,
-    outlineAttempts,
-    duplicateRatio,
-    provider,
-    pricingResolved: {
-      inPerK: priceIn ?? undefined,
-      outPerK: priceOut ?? undefined,
-      found: resolvedPrices.found
+    model: { requested: modelInput, resolved: model, provider },
+    strategy: {
+      context: { requested: contextStrategy, effective: contextStrategy },
+      duplicateRatio
     },
-    timingsSummary: {
+    counts: {
+      sectionCount: sectionTimings.length,
+      subheadingTotal: sectionTimings.reduce((a, s) => a + (s.subheadingCount || 0), 0)
+    },
+    timings: {
       totalMs,
       outlineMs: outlineMs!,
       sectionsMs,
       assembleMs,
-      exportMs
+      exportMs,
+      outlineAttempts,
+      sectionsBreakdown: timingsSectionsBreakdown
     },
-    sectionCount: sectionTimings.length,
-    subheadingTotal: sectionTimings.reduce((a, s) => a + (s.subheadingCount || 0), 0),
-    contextStrategyEffective: contextStrategy,
+    usage: {
+      outline: outlineUsage,
+      sections: sectionsUsage,
+      summaries: contextStrategy === 'summary' ? summaryUsage : undefined,
+      total: totalUsage,
+      sectionsBreakdown: usageSectionsBreakdown
+    },
+    pricing: resolvedPrices.found
+      ? { inPerK: priceIn ?? undefined, outPerK: priceOut ?? undefined, found: resolvedPrices.found }
+      : undefined,
+    cost: costs
+      ? {
+          outline: costs.outline,
+          sections: costs.sections,
+          summaries: costs.summaries,
+          total: costs.total
+        }
+      : undefined,
     warning: status === 'warning'
   };
   const wrappedPayload: GenerateArticleCallbackPayload = {
-    output: articleJSON,
-    input: inputPayload,
-    meta: metaPayload
+    output: { content, runtime },
+    input: inputPayload
   };
   if (writeFiles && exportModes.includes('json')) {
     const jsonPath = uniquePath(outDir, baseName, 'json', runTs);

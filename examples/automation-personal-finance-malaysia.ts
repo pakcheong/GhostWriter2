@@ -1,5 +1,5 @@
 import { autoGenerateArticlesFromTopics } from '../dist/index.js';
-import type { ArticleJSON } from '../src/types.js';
+import { type GenerateArticleCallbackPayload } from '../src/article/types.js';
 import type { GenerateArticleOptions } from '../src/article/types.js';
 import type { GenerateTopicsOptions } from '../src/topics/types.js';
 import { logArticle } from './util.js';
@@ -33,9 +33,9 @@ const articleConfig: Omit<GenerateArticleOptions, 'topic' | 'keywords'> & { keyw
   existingTags: ['personal finance', 'Malaysia', 'investment', 'savings'],
   existingCategories: ['personal-finance', 'Malaysia'],
   styleNotes: 'Practical, regulatory-aware (BNM), structured, clear action steps',
-  onArticle(_a: ArticleJSON) {
-    console.log(_a);
-    logArticle('auto-personal-finance-my', _a);
+  onArticle(a: GenerateArticleCallbackPayload) {
+    console.log(a);
+    logArticle('auto-personal-finance-my', a);
   }
 };
 

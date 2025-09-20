@@ -1,4 +1,5 @@
 import { generateArticle } from '../dist/index.js';
+import { type GenerateArticleCallbackPayload } from '../src/article/types.js';
 import { logArticle } from './util.js';
 
 (async () => {
@@ -17,7 +18,7 @@ import { logArticle } from './util.js';
     outputDir: './output',
     writeFiles: true,
     verbose: true,
-    onArticle(a: any) {
+    onArticle(a: GenerateArticleCallbackPayload) {
       logArticle('summary', a);
     }
   });
